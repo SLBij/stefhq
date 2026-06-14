@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Env files (never commit secrets)
+.env
+core/.env
+frontend/.env
+
+# Editor
+.idea/
+.vscode/
+
+# OS
+.DS_Store

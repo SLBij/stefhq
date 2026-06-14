@@ -1,0 +1,55 @@
+services:
+  backend:
+    build: ./core
+    restart: unless-stopped
+    env_file: ./core/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+      APP_ENV: production
+    depends_on:
+      - redis
+      - ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    build: ./core
+    command: uv run arq workers.memory_worker.WorkerSettings
+    restart: unless-stopped
+    env_file: ./core/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - redis
+      - ollama
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        PUBLIC_API_BASE: https://api.stefhq.io
+    restart: unless-stopped
+    environment:
+      ORIGIN: https://stefhq.io
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  redis_data:
+  ollama_data:
