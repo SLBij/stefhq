@@ -4,11 +4,11 @@ services:
     restart: unless-stopped
     env_file: ./core/.env
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://cache:6379
       OLLAMA_BASE_URL: http://ollama:11434
       APP_ENV: production
     depends_on:
-      - redis
+      - cache
       - ollama
     networks:
       - coolify
@@ -25,10 +25,10 @@ services:
     restart: unless-stopped
     env_file: ./core/.env
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://cache:6379
       OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
-      - redis
+      - cache
       - ollama
 
   frontend:
@@ -43,7 +43,7 @@ services:
       - coolify
       - default
 
-  redis:
+  cache:
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
