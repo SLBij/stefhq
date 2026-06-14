@@ -10,6 +10,9 @@ services:
     depends_on:
       - redis
       - ollama
+    networks:
+      - coolify
+      - default
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -36,6 +39,9 @@ services:
     restart: unless-stopped
     environment:
       ORIGIN: https://stefhq.io
+    networks:
+      - coolify
+      - default
 
   redis:
     image: redis:7-alpine
@@ -49,6 +55,10 @@ services:
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
+
+networks:
+  coolify:
+    external: true
 
 volumes:
   redis_data:
