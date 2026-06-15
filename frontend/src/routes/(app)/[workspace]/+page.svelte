@@ -122,12 +122,36 @@
 			send(e as unknown as SubmitEvent);
 		}
 	}
+
+	function exportChat() {
+		const date = new Date().toISOString().slice(0, 10);
+		const lines = [`# ${meta.label} — ${date}`, ''];
+		for (const msg of messages) {
+			const speaker = msg.role === 'user' ? 'You' : meta.label;
+			lines.push(`**${speaker}:** ${msg.content}`, '');
+		}
+		const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `${workspace}-${date}.md`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 </script>
 
 <div class="flex flex-col h-full">
 	<header class="flex items-center gap-3 px-6 py-4 shrink-0" style="border-bottom: 1px solid var(--color-border)">
 		<span style="color: {meta.color}" class="text-xl">{meta.icon}</span>
 		<span class="font-semibold" style="color: var(--color-text)">{meta.label}</span>
+		{#if messages.length > 0}
+			<button
+				onclick={exportChat}
+				title="Export as Markdown"
+				class="ml-auto text-xs px-2.5 py-1.5 rounded-lg transition-colors"
+				style="background: var(--color-surface-3); color: var(--color-text-muted); border: 1px solid var(--color-border)"
+			>↓ .md</button>
+		{/if}
 	</header>
 
 	<div bind:this={viewport} class="flex-1 overflow-y-auto px-6 py-6 space-y-6">

@@ -40,9 +40,10 @@ Workspaces:
 - business: CRM, clients, invoices, jobs, curtains business (Certain Curtains)
 - plant_atlas: plants, FloraFolio, plant care, growing, plant photos
 - round_table: coding, project planning, technical work, software
-- hive_mind: personal chat, thinking out loud, general questions, journaling
-- inbox: emails, drafting messages, communication management
-- global: system questions, memory management, cross-workspace queries
+- hive_mind: personal chat, thinking out loud, general questions, journaling, system questions, memory, anything that doesn't fit another workspace
+- inbox: tasks, reminders, to-dos, action items, things to do or remember
+
+IMPORTANT: If [Current workspace] is provided and the message fits reasonably within that workspace, stay there — only reroute when the message clearly belongs to a different workspace (e.g. CRM question in hive_mind → business).
 
 Respond with JSON only, no prose:
 {"workspace": "<workspace>", "intent_type": "question", "entities": ["named", "entities"], "reasoning": "one sentence"}
@@ -79,8 +80,13 @@ async def route(
     except ValueError:
         intent = IntentType.QUESTION
 
+    routed_ws = Workspace(data["workspace"])
+    # global is a memory category, not a chat workspace — fall back to current or hive_mind
+    if routed_ws == Workspace.GLOBAL:
+        routed_ws = current_workspace or Workspace.HIVE_MIND
+
     return RoutingDecision(
-        workspace=Workspace(data["workspace"]),
+        workspace=routed_ws,
         intent_type=intent,
         entities=data.get("entities", []),
         reasoning=data["reasoning"],

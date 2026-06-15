@@ -21,7 +21,7 @@ Workspaces:
 - business: CRM, clients, jobs, invoices, Certain Curtains
 - plant_atlas: plants, FloraFolio, gardening, plant care
 - round_table: coding, projects, software, technical decisions
-- hive_mind: personal reflections, thinking, journaling
+- hive_mind: personal reflections, thinking, journaling, general chat
 - inbox: email, communication, drafting
 
 Types: fact | preference | event | document

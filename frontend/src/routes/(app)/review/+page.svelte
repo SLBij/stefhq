@@ -18,7 +18,6 @@
 		plant_atlas: 'var(--color-plant)',
 		round_table: 'var(--color-round)',
 		inbox: 'var(--color-inbox)',
-		global: 'var(--color-global)',
 	};
 
 	const WS_LABEL: Record<string, string> = {
