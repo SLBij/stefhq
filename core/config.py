@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     embedding_model: str = "mxbai-embed-large"
 
+    github_token: str = ""
+
     florafolio_url: str = "http://localhost:5173"
     florafolio_headspace_key: str = ""
 
