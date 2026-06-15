@@ -104,7 +104,11 @@ class HiveMindAgent(DeskAgent):
 
                 messages.append({
                     "role": "assistant",
-                    "content": [b.model_dump() for b in final.content],
+                    "content": [
+                        {"type": "text", "text": b.text} if b.type == "text"
+                        else {"type": "tool_use", "id": b.id, "name": b.name, "input": b.input}
+                        for b in final.content
+                    ],
                 })
 
                 tool_results = []
