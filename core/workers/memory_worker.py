@@ -4,12 +4,14 @@ Run with: uv run arq workers.memory_worker.WorkerSettings
 """
 from uuid import UUID
 
+from arq import cron
 from arq.connections import RedisSettings
 
 from config import settings
 from database import async_session_factory
 from services.memory import CONFIDENCE_THRESHOLD, queue_for_review, save_memory
 from services.memory_extractor import extract_from_exchange
+from workers.briefing_worker import send_morning_briefing
 
 
 async def extract_memories(
@@ -52,5 +54,8 @@ async def extract_memories(
 
 
 class WorkerSettings:
-    functions = [extract_memories]
+    functions = [extract_memories, send_morning_briefing]
+    cron_jobs = [
+        cron(send_morning_briefing, hour=6, minute=15),  # 8:15am SAST (UTC+2)
+    ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
