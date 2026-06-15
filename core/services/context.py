@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agents.router import Workspace
-from models.db import Conversation
+from models.db import Conversation, Memory
 from services.memory import search_memories
 
 
@@ -21,6 +21,20 @@ async def assemble_context(
         limit=10,
     )
 
+    # Always pin tagged memories (e.g. agent_name) regardless of semantic relevance
+    pinned_result = await session.execute(
+        sa.select(Memory)
+        .where(
+            Memory.confirmed == True,
+            Memory.workspace == workspace.value,
+            Memory.tags.contains(["agent_name"]),
+        )
+        .limit(5)
+    )
+    pinned = list(pinned_result.scalars().all())
+    seen_ids = {m.id for m in pinned}
+    merged = pinned + [m for m in memories if m.id not in seen_ids]
+
     result = await session.execute(
         sa.select(Conversation)
         .where(Conversation.id == conversation.id)
@@ -32,7 +46,7 @@ async def assemble_context(
     return {
         "memories": [
             {"content": m.content, "type": m.memory_type, "workspace": m.workspace}
-            for m in memories
+            for m in merged
         ],
         "history": [{"role": msg.role, "content": msg.content} for msg in history],
         "entities": entities,
