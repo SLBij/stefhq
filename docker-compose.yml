@@ -13,6 +13,13 @@ services:
     networks:
       - coolify
       - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stefhq-api.rule=Host(`api.stefhq.io`)"
+      - "traefik.http.routers.stefhq-api.entrypoints=https"
+      - "traefik.http.routers.stefhq-api.tls=true"
+      - "traefik.http.routers.stefhq-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.stefhq-api.loadbalancer.server.port=8000"
 
   worker:
     build: ./core
