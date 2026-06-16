@@ -5,14 +5,23 @@
 
 	let logs = $state<Awaited<ReturnType<typeof getActivityLogs>>>([]);
 	let loading = $state(true);
+	let filter = $state<'all' | 'write' | string>('all'); // 'all' | 'write' | workspace id
 
 	$effect(() => {
 		if (!auth.token) return;
-		getActivityLogs(auth.token, 200).then((data) => {
+		getActivityLogs(auth.token, 500).then((data) => {
 			logs = data;
 			loading = false;
 		});
 	});
+
+	let filtered = $derived(
+		filter === 'all'
+			? logs
+			: filter === 'write'
+				? logs.filter((l) => l.action_type === 'tool_call')
+				: logs.filter((l) => l.workspace === filter)
+	);
 
 	function formatTime(dateStr: string) {
 		const d = new Date(dateStr);
@@ -33,27 +42,82 @@
 		web: 'Web',
 		telegram: 'Telegram',
 	};
+
+	let writeCount = $derived(logs.filter((l) => l.action_type === 'tool_call').length);
 </script>
 
 <div class="flex flex-col h-full">
-	<header class="flex items-center gap-3 px-6 py-4 shrink-0" style="border-bottom: 1px solid var(--color-border)">
-		<span style="color: var(--color-hive)" class="text-xl">◈</span>
-		<span class="font-semibold" style="color: var(--color-text)">Activity</span>
-		<span class="text-xs ml-1" style="color: var(--color-text-muted)">— what's been happening</span>
+	<header class="px-6 py-4 shrink-0" style="border-bottom: 1px solid var(--color-border)">
+		<div class="flex items-center gap-3 mb-3">
+			<span style="color: var(--color-hive)" class="text-xl">◈</span>
+			<span class="font-semibold" style="color: var(--color-text)">Activity</span>
+			<span class="text-xs ml-1" style="color: var(--color-text-muted)">— what's been happening</span>
+			{#if !loading}
+				<span class="ml-auto text-xs" style="color: var(--color-text-muted)">{logs.length} entries</span>
+			{/if}
+		</div>
+
+		<!-- Filter bar -->
+		<div class="flex items-center gap-1.5 flex-wrap">
+			<button
+				onclick={() => filter = 'all'}
+				class="px-2.5 py-1 rounded-lg text-xs transition-colors"
+				style:background={filter === 'all' ? 'var(--color-surface-3)' : 'transparent'}
+				style:color={filter === 'all' ? 'var(--color-text)' : 'var(--color-text-muted)'}
+				style:border={filter === 'all' ? '1px solid var(--color-border)' : '1px solid transparent'}
+			>
+				All
+			</button>
+
+			<button
+				onclick={() => filter = 'write'}
+				class="px-2.5 py-1 rounded-lg text-xs transition-colors flex items-center gap-1.5"
+				style:background={filter === 'write' ? '#fb923c18' : 'transparent'}
+				style:color={filter === 'write' ? '#fb923c' : 'var(--color-text-muted)'}
+				style:border={filter === 'write' ? '1px solid #fb923c40' : '1px solid transparent'}
+			>
+				Writes
+				{#if writeCount > 0}
+					<span class="px-1.5 py-0.5 rounded-full text-xs font-medium"
+						style="background: #fb923c20; color: #fb923c">
+						{writeCount}
+					</span>
+				{/if}
+			</button>
+
+			<div class="w-px h-4 mx-1" style="background: var(--color-border)"></div>
+
+			{#each WORKSPACES as ws}
+				<button
+					onclick={() => filter = filter === ws.id ? 'all' : ws.id}
+					class="px-2.5 py-1 rounded-lg text-xs transition-colors"
+					style:background={filter === ws.id ? `${ws.color}18` : 'transparent'}
+					style:color={filter === ws.id ? ws.color : 'var(--color-text-muted)'}
+					style:border={filter === ws.id ? `1px solid ${ws.color}40` : '1px solid transparent'}
+				>
+					{ws.icon} {ws.label}
+				</button>
+			{/each}
+		</div>
 	</header>
 
-	<div class="flex-1 overflow-y-auto px-6 py-6">
+	<div class="flex-1 overflow-y-auto px-6 py-4">
 		{#if loading}
 			<p class="text-sm" style="color: var(--color-text-muted)">Loading…</p>
-		{:else if logs.length === 0}
-			<p class="text-sm" style="color: var(--color-text-muted)">No activity yet. Start chatting!</p>
+		{:else if filtered.length === 0}
+			<p class="text-sm" style="color: var(--color-text-muted)">
+				{filter === 'all' ? 'No activity yet. Start chatting!' : 'No entries match this filter.'}
+			</p>
 		{:else}
 			<div class="flex flex-col gap-1">
-				{#each logs as log (log.id)}
+				{#each filtered as log (log.id)}
 					{@const ws = workspaceMeta(log.workspace)}
-					<div class="flex items-start gap-3 px-3 py-2.5 rounded-lg"
-						style="border: 1px solid var(--color-border); background: var(--color-surface-2)">
-
+					{@const isWrite = log.action_type === 'tool_call'}
+					<div
+						class="flex items-start gap-3 px-3 py-2.5 rounded-lg"
+						style:background={isWrite ? '#fb923c08' : 'var(--color-surface-2)'}
+						style:border={isWrite ? '1px solid #fb923c25' : '1px solid var(--color-border)'}
+					>
 						<span class="text-sm shrink-0 mt-0.5" style="color: {ws.color}">{ws.icon}</span>
 
 						<div class="flex-1 min-w-0">
@@ -65,10 +129,10 @@
 									{SOURCE_LABELS[log.source] ?? log.source}
 								</span>
 
-								{#if log.action_type === 'tool_call'}
-									<span class="px-1.5 py-0.5 rounded text-xs"
-										style="background: var(--color-business)15; color: var(--color-business)">
-										write
+								{#if isWrite}
+									<span class="px-1.5 py-0.5 rounded text-xs font-medium"
+										style="background: #fb923c20; color: #fb923c">
+										✎ write
 									</span>
 								{/if}
 
