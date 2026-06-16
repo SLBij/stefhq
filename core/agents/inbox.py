@@ -80,7 +80,7 @@ _TOOLS = [
     },
     {
         "name": "update_task",
-        "description": "Update an existing task — change status, priority, title, or description.",
+        "description": "Update an existing task — change status, priority, title, description, or due date.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -92,6 +92,10 @@ _TOOLS = [
                 "priority": {"type": "string", "enum": ["low", "medium", "high"]},
                 "title": {"type": "string"},
                 "description": {"type": "string"},
+                "due_date": {
+                    "type": "string",
+                    "description": "ISO 8601 date string e.g. 2026-06-20, or 'clear' to remove the due date.",
+                },
             },
             "required": ["task_id"],
         },
@@ -177,6 +181,7 @@ class InboxAgent(DeskAgent):
         priority: str | None = None,
         title: str | None = None,
         description: str | None = None,
+        due_date: str | None = None,
     ) -> str:
         result = await session.execute(sa.select(Task).where(Task.id == uuid.UUID(task_id)))
         task = result.scalar_one_or_none()
@@ -191,10 +196,19 @@ class InboxAgent(DeskAgent):
             task.title = title
         if description is not None:
             task.description = description
+        if due_date is not None:
+            if due_date.lower() == "clear":
+                task.due_date = None
+            else:
+                try:
+                    task.due_date = datetime.fromisoformat(due_date).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    return f"Invalid due_date format '{due_date}' — use YYYY-MM-DD."
 
         task.updated_at = datetime.now(timezone.utc)
         await session.commit()
-        return f"Updated task '{task.title}' → status: {task.status}, priority: {task.priority}"
+        due_str = task.due_date.date().isoformat() if task.due_date else "none"
+        return f"Updated task '{task.title}' → status: {task.status}, priority: {task.priority}, due: {due_str}"
 
     async def _execute_tool(self, name: str, tool_input: dict, session: AsyncSession) -> str:
         try:
