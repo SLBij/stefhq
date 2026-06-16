@@ -15,6 +15,7 @@ Only extract things that would be useful to remember in FUTURE conversations. Do
 - Obvious or general knowledge
 - Temporary states ("I'm busy right now")
 - Things said in a test or demo context
+- Tool failures, errors, or anything the agent couldn't do — these are events, not facts. Never save capability limitations or "agent can't do X" observations.
 
 Workspaces:
 - global: applies across all contexts (personal preferences, general facts about Stef)
