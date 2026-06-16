@@ -43,7 +43,7 @@ Workspaces:
 - hive_mind: personal chat, thinking out loud, general questions, journaling, system questions, memory, anything that doesn't fit another workspace
 - inbox: tasks, reminders, to-dos, action items, things to do or remember
 
-IMPORTANT: If [Current workspace] is provided and the message fits reasonably within that workspace, stay there — only reroute when the message clearly belongs to a different workspace (e.g. CRM question in hive_mind → business).
+IMPORTANT: If [Current workspace] is provided, you MUST stay in that workspace unless the message CLEARLY belongs somewhere else. Greetings ("hi", "hello"), vague questions, and conversational openers always stay in the current workspace. Only reroute for unambiguous signals (e.g. "what's the invoice for Carmen?" while in hive_mind → business).
 
 Respond with JSON only, no prose:
 {"workspace": "<workspace>", "intent_type": "question", "entities": ["named", "entities"], "reasoning": "one sentence"}
@@ -84,6 +84,9 @@ async def route(
     # global is a memory category, not a chat workspace — fall back to current or hive_mind
     if routed_ws == Workspace.GLOBAL:
         routed_ws = current_workspace or Workspace.HIVE_MIND
+    # hive_mind is the generic fallback — if we're already in a specific workspace, stay there
+    if routed_ws == Workspace.HIVE_MIND and current_workspace and current_workspace != Workspace.HIVE_MIND:
+        routed_ws = current_workspace
 
     return RoutingDecision(
         workspace=routed_ws,
