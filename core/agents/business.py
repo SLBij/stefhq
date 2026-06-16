@@ -28,6 +28,8 @@ Tools:
 - list_active_jobs: see what's currently active (useful for morning briefings, scheduling)
 - log_communication: record a call or message against a job
 - create_task: add a follow-up task to Inbox — use this instead of saying "switch to Inbox"
+- update_job: update production status, job notes, install date, or job status — requires job_id from get_client_jobs
+- update_client_notes: update notes on a client record — requires client_id from search_clients
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 and day-to-day business decisions. Be practical and direct — Stef runs this herself and doesn't need \
@@ -92,6 +94,42 @@ _TOOLS = [
                 "due_date": {"type": "string", "description": "ISO 8601 date e.g. 2026-06-20. Optional."},
             },
             "required": ["title"],
+        },
+    },
+    {
+        "name": "update_job",
+        "description": "Update a job's production status, notes, install date, required date, or overall status. Requires job_id from get_client_jobs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "UUID of the job to update"},
+                "production_status": {
+                    "type": "string",
+                    "enum": ["orders_placed", "orders_received", "in_sewing", "ready_to_install"],
+                    "description": "Current production stage",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "complete", "archived"],
+                    "description": "Overall job status — use carefully, 'complete' closes the job",
+                },
+                "notes": {"type": "string", "description": "Replace job notes with this text"},
+                "install_date": {"type": "string", "description": "ISO 8601 date e.g. 2026-06-20"},
+                "required_date": {"type": "string", "description": "ISO 8601 date — when client needs it by"},
+            },
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "update_client_notes",
+        "description": "Update the notes field on a client record. Requires client_id from search_clients.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_id": {"type": "string", "description": "UUID of the client"},
+                "notes": {"type": "string", "description": "New notes content (replaces existing)"},
+            },
+            "required": ["client_id", "notes"],
         },
     },
     {
@@ -228,6 +266,44 @@ class BusinessAgent(DeskAgent):
         await session.commit()
         return f"Task created: '{title}' (priority: {priority})"
 
+    async def _update_job(self, job_id: str, **kwargs) -> str:
+        payload = {}
+        date_fields = {"install_date", "required_date"}
+        for key, val in kwargs.items():
+            if val is None:
+                continue
+            if key in date_fields:
+                try:
+                    datetime.fromisoformat(val)  # validate
+                    payload[key] = val
+                except ValueError:
+                    return f"Invalid date format for {key}: '{val}' — use YYYY-MM-DD."
+            else:
+                payload[key] = val
+        if not payload:
+            return "Nothing to update — no fields provided."
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.patch(
+                f"{self._base()}/jobs",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                params={"id": f"eq.{job_id}"},
+                json=payload,
+            )
+            resp.raise_for_status()
+        updated = ", ".join(f"{k}={v}" for k, v in payload.items())
+        return f"Job updated: {updated}"
+
+    async def _update_client_notes(self, client_id: str, notes: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.patch(
+                f"{self._base()}/clients",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                params={"id": f"eq.{client_id}"},
+                json={"notes": notes},
+            )
+            resp.raise_for_status()
+        return f"Client notes updated."
+
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             # Read current communications array
@@ -271,6 +347,11 @@ class BusinessAgent(DeskAgent):
                 return await self._get_client_jobs(tool_input["client_id"])
             elif name == "list_active_jobs":
                 return await self._list_active_jobs()
+            elif name == "update_job":
+                job_id = tool_input.pop("job_id")
+                return await self._update_job(job_id, **tool_input)
+            elif name == "update_client_notes":
+                return await self._update_client_notes(tool_input["client_id"], tool_input["notes"])
             elif name == "log_communication":
                 return await self._log_communication(
                     tool_input["job_id"], tool_input["type"], tool_input["note"]
