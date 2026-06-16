@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
-from services.agent_naming import AGENT_NAME_PROMPT, AGENT_NAME_TOOL, save_agent_name
+from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
 _SYSTEM = """You are Stef's business assistant for Certain Curtains — her custom curtains and blinds business.
@@ -37,7 +37,9 @@ Context about the business:
 - Production flow: orders_placed → orders_received → in_sewing → ready_to_install
 - Communications log entries have types: call, email, whatsapp, visit, other
 
-Relevant memories and recent conversation history are provided as context.""" + AGENT_NAME_PROMPT
+Relevant memories and recent conversation history are provided as context.""" + agent_name_prompt(
+    "business assistant for a curtains and blinds company — practical, professional, commerce-focused"
+)
 
 _TOOLS = [
     {

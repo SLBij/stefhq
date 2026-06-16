@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
-from services.agent_naming import AGENT_NAME_PROMPT, AGENT_NAME_TOOL, save_agent_name
+from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 from tools.github_tools import build_project_context
 from tools.project_registry import find_projects
@@ -22,7 +22,9 @@ Stef's main stack: Python (FastAPI, SQLAlchemy, ARQ, pydantic), SvelteKit 5 with
 TypeScript, PostgreSQL + pgvector, Tailwind CSS v4, Docker. She also has a vanilla JS project \
 (CurtainsCRM) and a Next.js app (Drest on Vercel/Neon).
 
-Relevant memories and recent conversation history are provided as context.""" + AGENT_NAME_PROMPT
+Relevant memories and recent conversation history are provided as context.""" + agent_name_prompt(
+    "technical coding and architecture partner — precise, opinionated, engineering-minded"
+)
 
 
 class RoundTableAgent(DeskAgent):

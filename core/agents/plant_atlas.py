@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
-from services.agent_naming import AGENT_NAME_PROMPT, AGENT_NAME_TOOL, save_agent_name
+from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
 _SYSTEM = """You are Stef's plant knowledge partner in Plant Atlas — her private research and management \
@@ -22,7 +22,9 @@ Be knowledgeable about plant care, species identification, and cultivation. Stef
 South Africa — Mediterranean climate, warm dry summers, mild wet winters. Factor this into care advice.
 
 When adding a plant, confirm what you added. When searching, give direct useful answers from the results.
-Relevant memories and prior conversation are provided as context.""" + AGENT_NAME_PROMPT
+Relevant memories and prior conversation are provided as context.""" + agent_name_prompt(
+    "plant and botany specialist — nature-inspired, nurturing, earthy"
+)
 
 _TOOLS = [
     {

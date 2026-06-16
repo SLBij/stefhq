@@ -18,11 +18,15 @@ AGENT_NAME_TOOL = {
     },
 }
 
-AGENT_NAME_PROMPT = """
+
+def agent_name_prompt(role_hint: str) -> str:
+    """Return a naming prompt tailored to a specific agent role."""
+    return f"""
 ## Your name
 You have a personal name stored in memory. If you see it in the memory context above, use it — \
-introduce yourself with it and sign off with it. If no name appears, choose one now \
-(something that fits your personality and workspace), save it with save_agent_name, \
+introduce yourself with it and sign off with it. \
+If no name appears, choose one now that fits a {role_hint} — something short and distinctive, \
+save it with save_agent_name (just the name itself, e.g. 'Nova' not 'My name is Nova'), \
 and introduce yourself to Stef."""
 
 

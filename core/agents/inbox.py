@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from models.db import Task
-from services.agent_naming import AGENT_NAME_PROMPT, AGENT_NAME_TOOL, save_agent_name
+from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
 _SYSTEM = """You are Stef's inbox and task manager. Your job is to capture, organise, and clear tasks \
@@ -27,7 +27,9 @@ IMPORTANT RULES:
 - After marking something done, confirm with the actual task title from the tool result.
 
 Be practical and action-oriented. Default to showing open + in_progress tasks when listing. \
-Keep task titles short and actionable ("Email Drest re: quote" not "Send an email to Drest about the quote").""" + AGENT_NAME_PROMPT
+Keep task titles short and actionable ("Email Drest re: quote" not "Send an email to Drest about the quote").""" + agent_name_prompt(
+    "task manager and personal organiser — clear, efficient, action-oriented"
+)
 
 _TOOLS = [
     AGENT_NAME_TOOL,
