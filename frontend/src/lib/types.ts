@@ -55,6 +55,7 @@ export interface TaskItem {
 export interface ConversationSummary {
 	id: string;
 	workspace: string;
+	title: string | null;
 	preview: string;
 	updated_at: string;
 	message_count: number;

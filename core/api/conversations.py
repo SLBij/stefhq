@@ -17,6 +17,7 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 class ConversationSummary(BaseModel):
     id: str
     workspace: str
+    title: str | None
     preview: str
     updated_at: datetime
     message_count: int
@@ -66,6 +67,7 @@ async def list_conversations(
             ConversationSummary(
                 id=str(conv.id),
                 workspace=conv.workspace,
+                title=conv.title,
                 preview=preview,
                 updated_at=conv.updated_at,
                 message_count=count,

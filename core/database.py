@@ -26,3 +26,6 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(sa.text(
+            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title VARCHAR(200)"
+        ))

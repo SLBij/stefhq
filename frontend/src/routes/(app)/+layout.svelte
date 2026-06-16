@@ -116,7 +116,7 @@
 								class="text-xs leading-snug truncate"
 								style="color: {active ? 'var(--color-text)' : 'var(--color-text-muted)'}"
 							>
-								{conv.preview}
+								{conv.title ?? conv.preview}
 							</p>
 							<p class="text-xs mt-0.5" style="color: var(--color-text-muted); opacity: 0.6">
 								{formatTime(conv.updated_at)}

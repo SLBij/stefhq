@@ -13,6 +13,7 @@ from database import get_session
 from models.db import Conversation, Message, User
 from services.context import assemble_context
 from services.streaming import done_event, error_event, status_event
+from services.title import generate_title
 from workers.arq_pool import get_pool
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -37,6 +38,7 @@ async def chat(
             routing = await route(request.message, current_ws, request.attachments)
             yield status_event(f"Routing to {routing.workspace}")
 
+            is_new_conversation = not request.conversation_id
             if request.conversation_id:
                 result = await session.execute(
                     sa.select(Conversation).where(Conversation.id == request.conversation_id)
@@ -81,6 +83,14 @@ async def chat(
             await session.commit()
 
             yield done_event(str(assistant_message.id), str(conversation.id))
+
+            if is_new_conversation:
+                try:
+                    title = await generate_title(request.message, full_response)
+                    conversation.title = title
+                    await session.commit()
+                except Exception:
+                    pass  # title is cosmetic — never fail the request over it
 
             pool = await get_pool()
             await pool.enqueue_job(
