@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import httpx
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
+from models.db import Task
 from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
@@ -25,6 +27,7 @@ Tools:
 - get_client_jobs: pull all jobs for a client by their ID
 - list_active_jobs: see what's currently active (useful for morning briefings, scheduling)
 - log_communication: record a call or message against a job
+- create_task: add a follow-up task to Inbox — use this instead of saying "switch to Inbox"
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 and day-to-day business decisions. Be practical and direct — Stef runs this herself and doesn't need \
@@ -77,6 +80,20 @@ _TOOLS = [
         },
     },
     AGENT_NAME_TOOL,
+    {
+        "name": "create_task",
+        "description": "Create a follow-up task in Inbox. Use this whenever a next action comes up — don't tell Stef to switch to Inbox, just create it here.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short actionable task title, e.g. 'Follow up Wayne re: final payment'"},
+                "description": {"type": "string", "description": "Optional extra context"},
+                "priority": {"type": "string", "enum": ["low", "medium", "high"], "description": "Defaults to medium"},
+                "due_date": {"type": "string", "description": "ISO 8601 date e.g. 2026-06-20. Optional."},
+            },
+            "required": ["title"],
+        },
+    },
     {
         "name": "log_communication",
         "description": "Add a communication log entry to a job. Use after calls, messages, or visits to keep the job record up to date.",
@@ -185,6 +202,32 @@ class BusinessAgent(DeskAgent):
             j["payment_status"] = self._payment_status(j)
         return json.dumps(jobs)
 
+    async def _create_task(
+        self,
+        session: AsyncSession,
+        title: str,
+        description: str | None = None,
+        priority: str = "medium",
+        due_date: str | None = None,
+    ) -> str:
+        parsed_due = None
+        if due_date:
+            try:
+                parsed_due = datetime.fromisoformat(due_date).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        task = Task(
+            title=title,
+            description=description,
+            priority=priority,
+            due_date=parsed_due,
+            tags=["business"],
+            source="business",
+        )
+        session.add(task)
+        await session.commit()
+        return f"Task created: '{title}' (priority: {priority})"
+
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             # Read current communications array
@@ -220,6 +263,8 @@ class BusinessAgent(DeskAgent):
         try:
             if name == "save_agent_name":
                 return await save_agent_name(tool_input["name"], self.workspace.value, session)
+            if name == "create_task":
+                return await self._create_task(session, **tool_input)
             if name == "search_clients":
                 return await self._search_clients(tool_input["name"])
             elif name == "get_client_jobs":
