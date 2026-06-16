@@ -39,7 +39,7 @@
 	}
 
 	function newConversation() {
-		goto(`/${activeWorkspace}`);
+		goto(`/${activeWorkspace}?new=1`);
 	}
 
 	let activeWorkspace = $derived(

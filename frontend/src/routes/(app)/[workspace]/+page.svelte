@@ -33,6 +33,7 @@
 	$effect(() => {
 		const _ws = workspace;
 		const cid = page.url.searchParams.get('c');
+		const isNewChat = page.url.searchParams.get('new') === '1';
 
 		// Don't reset when goto() just added ?c= for a conversation we're already in
 		if (cid !== null && cid === conversationId) return;
@@ -53,8 +54,8 @@
 				isLoadingHistory = false;
 				scrollToBottom();
 			});
-		} else if (!cid && auth.token) {
-			// Auto-load the most recent conversation for this workspace
+		} else if (!cid && !isNewChat && auth.token) {
+			// Auto-load the most recent conversation when switching workspace
 			getConversations(auth.token, _ws).then((convs) => {
 				if (convs.length > 0) {
 					goto(`/${_ws}?c=${convs[0].id}`, { replaceState: true, keepFocus: true, noScroll: true });
