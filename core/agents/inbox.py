@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from models.db import Task
+from services.activity import log_activity
 from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
@@ -214,15 +215,21 @@ class InboxAgent(DeskAgent):
         try:
             if name == "save_agent_name":
                 return await save_agent_name(tool_input["name"], self.workspace.value, session)
+            if name == "create_task":
+                result = await self._create_task(session, **tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"create_task: {tool_input.get('title', '')[:80]}")
+                return result
             if name == "list_tasks":
                 return await self._list_tasks(
                     session, tool_input.get("status"), tool_input.get("priority")
                 )
-            elif name == "create_task":
-                return await self._create_task(session, **tool_input)
             elif name == "update_task":
                 task_id = tool_input.pop("task_id")
-                return await self._update_task(session, task_id, **tool_input)
+                result = await self._update_task(session, task_id, **tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"update_task: {result[:120]}", {"task_id": task_id})
+                return result
             return "Unknown tool"
         except Exception as e:
             return f"Tool error: {e}"

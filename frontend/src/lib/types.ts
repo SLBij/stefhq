@@ -52,6 +52,15 @@ export interface TaskItem {
 	updated_at: string;
 }
 
+export interface ActivityEntry {
+	id: string;
+	created_at: string;
+	source: string;
+	workspace: string;
+	action_type: string;
+	summary: string;
+}
+
 export interface ConversationSummary {
 	id: string;
 	workspace: string;

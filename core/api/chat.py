@@ -12,6 +12,7 @@ from api.auth import get_current_user
 from database import get_session
 from models.db import Conversation, Message, User
 from services.context import assemble_context
+from services.activity import log_activity
 from services.streaming import done_event, error_event, status_event
 from services.title import generate_title
 from workers.arq_pool import get_pool
@@ -83,6 +84,15 @@ async def chat(
             await session.commit()
 
             yield done_event(str(assistant_message.id), str(conversation.id))
+
+            try:
+                preview = request.message[:120] + ("…" if len(request.message) > 120 else "")
+                await log_activity(
+                    session, "web", routing.workspace.value, "chat", preview,
+                    {"conversation_id": str(conversation.id)},
+                )
+            except Exception:
+                pass
 
             if is_new_conversation:
                 try:

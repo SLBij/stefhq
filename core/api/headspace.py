@@ -10,6 +10,7 @@ from agents.router import route
 from api.auth import get_current_user
 from database import get_session
 from models.db import Conversation, Message, User
+from services.activity import log_activity
 from services.context import assemble_context
 from workers.arq_pool import get_pool
 
@@ -84,6 +85,15 @@ async def headspace_chat(
         workspace=routing.workspace.value,
         assistant_message_id=str(assistant_message.id),
     )
+
+    try:
+        preview = body.message[:120] + ("…" if len(body.message) > 120 else "")
+        await log_activity(
+            session, "telegram", routing.workspace.value, "chat", preview,
+            {"conversation_id": str(conversation.id)},
+        )
+    except Exception:
+        pass
 
     return {
         "response": full_response,

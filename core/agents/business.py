@@ -11,6 +11,7 @@ from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
 from models.db import Task
+from services.activity import log_activity
 from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
@@ -335,12 +336,17 @@ class BusinessAgent(DeskAgent):
 
         return f"Communication logged: [{comm_type}] {note}"
 
+    _WRITE_TOOLS = {"create_task", "update_job", "update_client_notes", "log_communication"}
+
     async def _execute_tool(self, name: str, tool_input: dict, session: AsyncSession) -> str:
         try:
             if name == "save_agent_name":
                 return await save_agent_name(tool_input["name"], self.workspace.value, session)
             if name == "create_task":
-                return await self._create_task(session, **tool_input)
+                result = await self._create_task(session, **tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"create_task: {tool_input.get('title', '')[:80]}")
+                return result
             if name == "search_clients":
                 return await self._search_clients(tool_input["name"])
             elif name == "get_client_jobs":
@@ -349,9 +355,15 @@ class BusinessAgent(DeskAgent):
                 return await self._list_active_jobs()
             elif name == "update_job":
                 job_id = tool_input.pop("job_id")
-                return await self._update_job(job_id, **tool_input)
+                result = await self._update_job(job_id, **tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"update_job: {result[:120]}", {"job_id": job_id})
+                return result
             elif name == "update_client_notes":
-                return await self._update_client_notes(tool_input["client_id"], tool_input["notes"])
+                result = await self._update_client_notes(tool_input["client_id"], tool_input["notes"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"update_client_notes: client {tool_input['client_id'][:8]}…")
+                return result
             elif name == "log_communication":
                 return await self._log_communication(
                     tool_input["job_id"], tool_input["type"], tool_input["note"]

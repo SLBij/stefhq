@@ -117,6 +117,22 @@ class Task(Base):
     )
 
 
+class ActivityLog(Base):
+    __tablename__ = "activity_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    # "web" | "telegram"
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    workspace: Mapped[str] = mapped_column(String(50), nullable=False)
+    # "chat" | "tool_call"
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
+
+
 class MemoryReviewItem(Base):
     __tablename__ = "memory_review_queue"
 

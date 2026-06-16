@@ -1,4 +1,4 @@
-import type { ConversationSummary, Message, SavedMemory, TaskItem, Workspace } from './types';
+import type { ActivityEntry, ConversationSummary, Message, SavedMemory, TaskItem, Workspace } from './types';
 
 import { PUBLIC_API_BASE } from '$env/static/public';
 const BASE = PUBLIC_API_BASE;
@@ -122,6 +122,14 @@ export async function getReviewQueue(token: string) {
 	const res = await fetch(`${BASE}/api/memory/review`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
+	return res.json();
+}
+
+export async function getActivityLogs(token: string, limit = 100): Promise<ActivityEntry[]> {
+	const res = await fetch(`${BASE}/api/activity/?limit=${limit}`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return [];
 	return res.json();
 }
 
