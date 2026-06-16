@@ -43,7 +43,8 @@ Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
 - Stef handles sales, measuring, and project management
 - Job statuses: active → complete → archived
-- Production flow: orders_placed → orders_received → in_sewing → ready_to_install
+- Production flow: orders_placed → orders_received (fabrics/rails/blinds_received booleans) → in_sewing (sewing_complete boolean) → ready_to_install → installed
+- delay_note: shown to client on their status tracker — set when there's a backorder or delay
 - Communications log entries have types: call, email, whatsapp, visit, other
 
 Relevant memories and recent conversation history are provided as context.""" + agent_name_prompt(
@@ -99,16 +100,21 @@ _TOOLS = [
     },
     {
         "name": "update_job",
-        "description": "Update a job's production status, notes, install date, required date, or overall status. Requires job_id from get_client_jobs.",
+        "description": "Update a job's production status, production checkboxes, notes, dates, delay note, or overall status. Requires job_id from get_client_jobs.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "job_id": {"type": "string", "description": "UUID of the job to update"},
                 "production_status": {
                     "type": "string",
-                    "enum": ["orders_placed", "orders_received", "in_sewing", "ready_to_install"],
-                    "description": "Current production stage",
+                    "enum": ["orders_placed", "orders_received", "in_sewing", "ready_to_install", "installed"],
+                    "description": "Overall production stage",
                 },
+                "fabrics_received": {"type": "boolean", "description": "Mark fabrics as received"},
+                "rails_received": {"type": "boolean", "description": "Mark rails as received"},
+                "blinds_received": {"type": "boolean", "description": "Mark blinds as received"},
+                "sewing_complete": {"type": "boolean", "description": "Mark sewing as complete"},
+                "delay_note": {"type": "string", "description": "Delay message shown to client on status tracker (e.g. 'Fabric on backorder, estimated delay 1 week'). Pass empty string to clear."},
                 "status": {
                     "type": "string",
                     "enum": ["active", "complete", "archived"],
@@ -207,7 +213,7 @@ class BusinessAgent(DeskAgent):
                 headers=self._headers(),
                 params={
                     "client_id": f"eq.{client_id}",
-                    "select": "id,quote_ref,status,production_status,fabrics_received,rails_received,sewing_complete,install_date,invoice_total,invoice_date,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_date,final_payment_received,quote_accepted_by,notes,communications,created_at",
+                    "select": "id,quote_ref,status,production_status,fabrics_received,rails_received,blinds_received,sewing_complete,delay_note,install_date,invoice_total,invoice_date,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_date,final_payment_received,quote_accepted_by,notes,communications,created_at",
                     "order": "created_at.desc",
                 },
             )
@@ -270,6 +276,7 @@ class BusinessAgent(DeskAgent):
     async def _update_job(self, job_id: str, **kwargs) -> str:
         payload = {}
         date_fields = {"install_date", "required_date"}
+        bool_fields = {"fabrics_received", "rails_received", "blinds_received", "sewing_complete"}
         for key, val in kwargs.items():
             if val is None:
                 continue
@@ -279,6 +286,8 @@ class BusinessAgent(DeskAgent):
                     payload[key] = val
                 except ValueError:
                     return f"Invalid date format for {key}: '{val}' — use YYYY-MM-DD."
+            elif key in bool_fields:
+                payload[key] = bool(val)
             else:
                 payload[key] = val
         if not payload:
