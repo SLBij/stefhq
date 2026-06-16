@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
+from services.agent_naming import AGENT_NAME_PROMPT, AGENT_NAME_TOOL, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 from tools.github_tools import build_project_context
 from tools.project_registry import find_projects
@@ -21,7 +22,7 @@ Stef's main stack: Python (FastAPI, SQLAlchemy, ARQ, pydantic), SvelteKit 5 with
 TypeScript, PostgreSQL + pgvector, Tailwind CSS v4, Docker. She also has a vanilla JS project \
 (CurtainsCRM) and a Next.js app (Drest on Vercel/Neon).
 
-Relevant memories and recent conversation history are provided as context."""
+Relevant memories and recent conversation history are provided as context.""" + AGENT_NAME_PROMPT
 
 
 class RoundTableAgent(DeskAgent):
@@ -55,13 +56,39 @@ class RoundTableAgent(DeskAgent):
         messages = [*context.get("history", []), {"role": "user", "content": message}]
 
         try:
-            async with self.client.messages.stream(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                system=system,
-                messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield token_event(text)
+            while True:
+                async with self.client.messages.stream(
+                    model="claude-sonnet-4-6",
+                    max_tokens=4096,
+                    system=system,
+                    messages=messages,
+                    tools=[AGENT_NAME_TOOL],
+                ) as stream:
+                    async for text in stream.text_stream:
+                        yield token_event(text)
+                    final = await stream.get_final_message()
+
+                if final.stop_reason != "tool_use":
+                    break
+
+                tool_results = []
+                for block in final.content:
+                    if block.type != "tool_use":
+                        continue
+                    if block.name == "save_agent_name":
+                        result = await save_agent_name(block.input["name"], self.workspace.value, session)
+                    else:
+                        result = f"Unknown tool: {block.name}"
+                    tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
+
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": [
+                        {"type": "text", "text": b.text} if b.type == "text"
+                        else {"type": "tool_use", "id": b.id, "name": b.name, "input": dict(b.input)}
+                        for b in final.content
+                    ]},
+                    {"role": "user", "content": tool_results},
+                ]
         except Exception as e:
             yield error_event(str(e))

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
+from services.agent_naming import AGENT_NAME_PROMPT, AGENT_NAME_TOOL, save_agent_name
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
 _SYSTEM = """You are Stef's business assistant for Certain Curtains — her custom curtains and blinds business.
@@ -36,7 +37,7 @@ Context about the business:
 - Production flow: orders_placed → orders_received → in_sewing → ready_to_install
 - Communications log entries have types: call, email, whatsapp, visit, other
 
-Relevant memories and recent conversation history are provided as context."""
+Relevant memories and recent conversation history are provided as context.""" + AGENT_NAME_PROMPT
 
 _TOOLS = [
     {
@@ -70,6 +71,7 @@ _TOOLS = [
             "required": [],
         },
     },
+    AGENT_NAME_TOOL,
     {
         "name": "log_communication",
         "description": "Add a communication log entry to a job. Use after calls, messages, or visits to keep the job record up to date.",
@@ -192,8 +194,10 @@ class BusinessAgent(DeskAgent):
 
         return f"Communication logged: [{comm_type}] {note}"
 
-    async def _execute_tool(self, name: str, tool_input: dict) -> str:
+    async def _execute_tool(self, name: str, tool_input: dict, session: AsyncSession) -> str:
         try:
+            if name == "save_agent_name":
+                return await save_agent_name(tool_input["name"], self.workspace.value, session)
             if name == "search_clients":
                 return await self._search_clients(tool_input["name"])
             elif name == "get_client_jobs":
@@ -241,7 +245,7 @@ class BusinessAgent(DeskAgent):
                 for block in final.content:
                     if block.type == "tool_use":
                         yield status_event("Checking CRM…")
-                        result = await self._execute_tool(block.name, dict(block.input))
+                        result = await self._execute_tool(block.name, dict(block.input), session)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,

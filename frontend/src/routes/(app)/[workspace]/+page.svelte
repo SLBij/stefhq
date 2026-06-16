@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { marked } from 'marked';
-	import { getAgentName, getConversationMessages, getRecentMemories, streamChat } from '$lib/api';
+	import { getAgentName, getConversationMessages, getConversations, getRecentMemories, streamChat } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { historyRefresh } from '$lib/historyRefresh.svelte';
 	import { WORKSPACES, type Message, type Workspace } from '$lib/types';
@@ -52,6 +52,13 @@
 				}));
 				isLoadingHistory = false;
 				scrollToBottom();
+			});
+		} else if (!cid && auth.token) {
+			// Auto-load the most recent conversation for this workspace
+			getConversations(auth.token, _ws).then((convs) => {
+				if (convs.length > 0) {
+					goto(`/${_ws}?c=${convs[0].id}`, { replaceState: true, keepFocus: true, noScroll: true });
+				}
 			});
 		}
 	});
