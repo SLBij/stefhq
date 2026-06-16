@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from agents import get_agent
-from agents.router import Workspace, route
+from agents.router import IntentType, RoutingDecision, Workspace, route
 from api.auth import get_current_user
 from database import get_session
 from models.db import Conversation, Message, User
@@ -36,7 +36,16 @@ async def chat(
     async def stream():
         try:
             current_ws = Workspace(request.workspace) if request.workspace else None
-            routing = await route(request.message, current_ws, request.attachments)
+            if current_ws:
+                # Client sent an explicit workspace — trust it, no LLM routing needed
+                routing = RoutingDecision(
+                    workspace=current_ws,
+                    intent_type=IntentType.QUESTION,
+                    entities=[],
+                    reasoning="workspace set by client",
+                )
+            else:
+                routing = await route(request.message, current_ws, request.attachments)
             yield status_event(f"Routing to {routing.workspace}")
 
             is_new_conversation = not request.conversation_id
