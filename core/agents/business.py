@@ -126,6 +126,21 @@ class BusinessAgent(DeskAgent):
             return f"No clients found matching '{name}'."
         return json.dumps(results)
 
+    @staticmethod
+    def _payment_status(job: dict) -> str:
+        if job.get("final_payment_received"):
+            return "paid"
+        if job.get("part_payment_received"):
+            amount = job.get("part_payment_amount")
+            return f"part paid (R{float(amount):.0f})" if amount else "part paid"
+        if job.get("invoice_number") and not job.get("invoice_sent_at"):
+            return "invoice not sent"
+        if job.get("invoice_number"):
+            return "awaiting deposit"
+        if job.get("quote_accepted_by"):
+            return "to invoice"
+        return "no invoice yet"
+
     async def _get_client_jobs(self, client_id: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -133,7 +148,7 @@ class BusinessAgent(DeskAgent):
                 headers=self._headers(),
                 params={
                     "client_id": f"eq.{client_id}",
-                    "select": "id,quote_ref,status,production_status,fabrics_received,rails_received,sewing_complete,install_date,invoice_total,invoice_date,notes,communications,created_at",
+                    "select": "id,quote_ref,status,production_status,fabrics_received,rails_received,sewing_complete,install_date,invoice_total,invoice_date,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_date,final_payment_received,quote_accepted_by,notes,communications,created_at",
                     "order": "created_at.desc",
                 },
             )
@@ -141,8 +156,8 @@ class BusinessAgent(DeskAgent):
             jobs = resp.json()
         if not jobs:
             return "No jobs found for this client."
-        # Truncate communications to last 3 entries to keep context lean
         for j in jobs:
+            j["payment_status"] = self._payment_status(j)
             comms = j.get("communications") or []
             j["communications"] = comms[-3:] if comms else []
         return json.dumps(jobs)
@@ -154,7 +169,7 @@ class BusinessAgent(DeskAgent):
                 headers=self._headers(),
                 params={
                     "status": "eq.active",
-                    "select": "id,quote_ref,client_name,production_status,install_date,invoice_total,required_date,notes",
+                    "select": "id,quote_ref,client_name,production_status,install_date,invoice_total,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,final_payment_received,quote_accepted_by,required_date,notes",
                     "order": "install_date.asc.nullslast",
                     "limit": "50",
                 },
@@ -163,6 +178,8 @@ class BusinessAgent(DeskAgent):
             jobs = resp.json()
         if not jobs:
             return "No active jobs at the moment."
+        for j in jobs:
+            j["payment_status"] = self._payment_status(j)
         return json.dumps(jobs)
 
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
