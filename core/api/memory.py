@@ -99,6 +99,25 @@ async def get_recent_memories(
     ]
 
 
+@router.get("/agent-name")
+async def get_agent_name(
+    workspace: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        sa.select(Memory)
+        .where(
+            Memory.confirmed == True,
+            Memory.workspace == workspace,
+            Memory.tags.contains(["agent_name"]),
+        )
+        .limit(1)
+    )
+    memory = result.scalar_one_or_none()
+    return {"name": memory.content if memory else None}
+
+
 @router.get("/search")
 async def search(
     q: str,

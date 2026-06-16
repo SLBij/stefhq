@@ -85,6 +85,15 @@ export async function getConversationMessages(
 	return res.json();
 }
 
+export async function getAgentName(token: string, workspace: string): Promise<string | null> {
+	const res = await fetch(`${BASE}/api/memory/agent-name?workspace=${workspace}`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return null;
+	const data = await res.json();
+	return data.name ?? null;
+}
+
 export async function getRecentMemories(token: string): Promise<SavedMemory[]> {
 	const res = await fetch(`${BASE}/api/memory/recent`, {
 		headers: { Authorization: `Bearer ${token}` },

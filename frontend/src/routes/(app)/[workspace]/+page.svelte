@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { marked } from 'marked';
-	import { getConversationMessages, getRecentMemories, streamChat } from '$lib/api';
+	import { getAgentName, getConversationMessages, getRecentMemories, streamChat } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { historyRefresh } from '$lib/historyRefresh.svelte';
 	import { WORKSPACES, type Message, type Workspace } from '$lib/types';
@@ -19,7 +19,16 @@
 	let input = $state('');
 	let isStreaming = $state(false);
 	let isLoadingHistory = $state(false);
+	let agentName = $state<string | null>(null);
 	let viewport: HTMLDivElement;
+
+	$effect(() => {
+		const _ws = workspace;
+		agentName = null;
+		if (auth.token) {
+			getAgentName(auth.token, workspace).then((n) => { agentName = n; });
+		}
+	});
 
 	$effect(() => {
 		const _ws = workspace;
@@ -143,7 +152,12 @@
 <div class="flex flex-col h-full">
 	<header class="flex items-center gap-3 px-6 py-4 shrink-0" style="border-bottom: 1px solid var(--color-border)">
 		<span style="color: {meta.color}" class="text-xl">{meta.icon}</span>
-		<span class="font-semibold" style="color: var(--color-text)">{meta.label}</span>
+		<div class="flex flex-col leading-tight">
+			<span class="font-semibold" style="color: var(--color-text)">{meta.label}</span>
+			{#if agentName}
+				<span class="text-xs" style="color: {meta.color}; opacity: 0.8">{agentName}</span>
+			{/if}
+		</div>
 		{#if messages.length > 0}
 			<button
 				onclick={exportChat}
