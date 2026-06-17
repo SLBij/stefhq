@@ -31,6 +31,8 @@ Tools:
 - create_task: add a follow-up task to Inbox — use this instead of saying "switch to Inbox"
 - update_job: update production status, job notes, install date, or job status — requires job_id from get_client_jobs
 - update_client_notes: update notes on a client record — requires client_id from search_clients
+- create_client: add a new client to the CRM — always search first to avoid duplicates
+- create_job: add a new job for an existing client — ALWAYS summarise details and get explicit confirmation before calling
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 and day-to-day business decisions. Be practical and direct — Stef runs this herself and doesn't need \
@@ -38,6 +40,10 @@ corporate-speak, just useful answers.
 
 If asked to create, update, or manage tasks, reminders, or to-dos, say clearly: "That lives in Inbox \
 — switch there and I can help you with the CRM side." Never claim you can't persist data generally.
+
+IMPORTANT for create_job and create_client: ALWAYS present a clear summary of what you're about to \
+create and wait for explicit confirmation ("yes", "correct", "confirmed") before calling the tool. \
+For jobs, echo back all measurements and product details — a wrong measurement means a wrong product.
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
@@ -138,6 +144,36 @@ _TOOLS = [
                 "notes": {"type": "string", "description": "New notes content (replaces existing)"},
             },
             "required": ["client_id", "notes"],
+        },
+    },
+    {
+        "name": "create_client",
+        "description": "Add a new client to the CRM. Always run search_clients first to confirm they don't already exist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Full client name"},
+                "phone": {"type": "string", "description": "Phone number"},
+                "email": {"type": "string", "description": "Email address"},
+                "address": {"type": "string", "description": "Physical address"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "create_job",
+        "description": "Create a new job for an existing client. Requires client_id from search_clients or create_client. ALWAYS summarise all details and get explicit confirmation before calling.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_id": {"type": "string", "description": "UUID of the client"},
+                "client_name": {"type": "string", "description": "Client name (denormalised onto the job)"},
+                "notes": {"type": "string", "description": "Job description — product type, measurements, room, any relevant details"},
+                "quote_ref": {"type": "string", "description": "Quote reference number if known"},
+                "install_date": {"type": "string", "description": "ISO 8601 date e.g. 2026-07-15"},
+                "required_date": {"type": "string", "description": "ISO 8601 date — when client needs it by"},
+            },
+            "required": ["client_id", "client_name"],
         },
     },
     {
@@ -315,6 +351,68 @@ class BusinessAgent(DeskAgent):
             resp.raise_for_status()
         return f"Client notes updated."
 
+    async def _create_client(
+        self,
+        name: str,
+        phone: str | None = None,
+        email: str | None = None,
+        address: str | None = None,
+    ) -> str:
+        payload = {"name": name}
+        if phone:
+            payload["phone"] = phone
+        if email:
+            payload["email"] = email
+        if address:
+            payload["address"] = address
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{self._base()}/clients",
+                headers={**self._headers(), "Prefer": "return=representation"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            created = resp.json()
+        record = created[0] if isinstance(created, list) else created
+        return json.dumps({"id": record["id"], "name": record["name"]})
+
+    async def _create_job(
+        self,
+        client_id: str,
+        client_name: str,
+        notes: str | None = None,
+        quote_ref: str | None = None,
+        install_date: str | None = None,
+        required_date: str | None = None,
+    ) -> str:
+        payload: dict = {
+            "client_id": client_id,
+            "client_name": client_name,
+            "status": "active",
+            "production_status": "orders_placed",
+        }
+        if notes:
+            payload["notes"] = notes
+        if quote_ref:
+            payload["quote_ref"] = quote_ref
+        for field, val in [("install_date", install_date), ("required_date", required_date)]:
+            if val:
+                try:
+                    datetime.fromisoformat(val)
+                    payload[field] = val
+                except ValueError:
+                    return f"Invalid date format for {field}: '{val}' — use YYYY-MM-DD."
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{self._base()}/jobs",
+                headers={**self._headers(), "Prefer": "return=representation"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            created = resp.json()
+        record = created[0] if isinstance(created, list) else created
+        return json.dumps({"id": record["id"], "client_name": record["client_name"], "status": record["status"]})
+
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             # Read current communications array
@@ -346,7 +444,7 @@ class BusinessAgent(DeskAgent):
 
         return f"Communication logged: [{comm_type}] {note}"
 
-    _WRITE_TOOLS = {"create_task", "update_job", "update_client_notes", "log_communication"}
+    _WRITE_TOOLS = {"create_task", "update_job", "update_client_notes", "log_communication", "create_client", "create_job"}
 
     async def _execute_tool(self, name: str, tool_input: dict, session: AsyncSession) -> str:
         try:
@@ -373,6 +471,16 @@ class BusinessAgent(DeskAgent):
                 result = await self._update_client_notes(tool_input["client_id"], tool_input["notes"])
                 await log_activity(session, "web", self.workspace.value, "tool_call",
                                    f"update_client_notes: client {tool_input['client_id'][:8]}…")
+                return result
+            elif name == "create_client":
+                result = await self._create_client(**tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"create_client: {tool_input.get('name', '')}")
+                return result
+            elif name == "create_job":
+                result = await self._create_job(**tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"create_job: {tool_input.get('client_name', '')} — {tool_input.get('notes', '')[:60]}")
                 return result
             elif name == "log_communication":
                 return await self._log_communication(
