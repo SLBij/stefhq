@@ -388,8 +388,7 @@ class BusinessAgent(DeskAgent):
         payload: dict = {
             "client_id": client_id,
             "client_name": client_name,
-            "status": "active",
-            "production_status": "orders_placed",
+            "status": "quoting",
         }
         if notes:
             payload["notes"] = notes
