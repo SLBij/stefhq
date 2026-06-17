@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
+from integrations.bijoux_home import get_car_service, get_meds_status, get_shopping_list, get_spider_info
 from models.db import Task
 from services.memory import save_memory, search_memories
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
@@ -30,6 +31,11 @@ then introduce yourself to Stef.
 - search_memories: look up specific information not already in context
 - get_weekly_overview: fetch Stef's open tasks (Inbox) and active CRM jobs (Business) in one call — \
 use for "what's on my plate", "catch me up", "what do I have this week", and similar
+- get_shopping_list: fetch the current BijouxHome grocery list
+- get_meds_status: fetch medication schedule with days remaining for Stef and Angelo
+- get_car_service: fetch service history and service items for all cars (Honda, Lexus, Fiesta)
+- get_spider_info: fetch tarantula data including last fed and last moult dates — \
+pass a name/code to filter to one spider, or leave blank for the full crew
 
 Use save_memory proactively when Stef shares facts, preferences, decisions, or anything she'd expect \
 you to recall later. Don't wait to be asked."""
@@ -77,6 +83,35 @@ _TOOLS = [
         "name": "get_weekly_overview",
         "description": "Fetch Stef's open tasks (Inbox) and active CRM jobs (Business/Certain Curtains) in one call. Use for 'what's on my plate', 'catch me up', 'what do I have this week', and similar cross-workspace questions.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_shopping_list",
+        "description": "Fetch the current grocery shopping list from BijouxHome, grouped by store.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_meds_status",
+        "description": "Fetch medication schedule for Stef and Angelo from BijouxHome, including days until each med needs to be refilled.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_car_service",
+        "description": "Fetch car service information from BijouxHome — service items and when they were last done for the Honda, Lexus, and Fiesta.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_spider_info",
+        "description": "Fetch tarantula collection info from BijouxHome including last fed and last moult dates. Pass a name or code to filter to one spider.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name_filter": {
+                    "type": "string",
+                    "description": "Optional: name or code to filter to a specific spider. Leave empty for the full crew.",
+                },
+            },
+            "required": [],
+        },
     },
 ]
 
@@ -132,6 +167,10 @@ class HiveMindAgent(DeskAgent):
                         "save_memory": "Saving to memory...",
                         "search_memories": "Searching memory...",
                         "get_weekly_overview": "Fetching your overview...",
+                        "get_shopping_list": "Checking shopping list...",
+                        "get_meds_status": "Checking meds...",
+                        "get_car_service": "Checking car service...",
+                        "get_spider_info": "Checking the creepy crawly crew...",
                     }.get(block.name, "Working...")
                     yield status_event(_status)
                     result = await self._run_tool(block.name, block.input, session)
@@ -167,6 +206,18 @@ class HiveMindAgent(DeskAgent):
 
         if name == "get_weekly_overview":
             return await self._get_weekly_overview(session)
+
+        if name == "get_shopping_list":
+            return await get_shopping_list()
+
+        if name == "get_meds_status":
+            return await get_meds_status()
+
+        if name == "get_car_service":
+            return await get_car_service()
+
+        if name == "get_spider_info":
+            return await get_spider_info(args.get("name_filter", ""))
 
         return f"Unknown tool: {name}"
 

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     florafolio_url: str = "http://localhost:5173"
     florafolio_headspace_key: str = ""
 
+    bijoux_api_url: str = "https://bijouxhome.online/api/bijoux"
+    bijoux_api_secret: str = ""
+
     curtains_supabase_url: str = "https://sddickbinhposlkatmwi.supabase.co"
     curtains_supabase_key: str = ""
 
