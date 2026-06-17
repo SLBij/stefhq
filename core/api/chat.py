@@ -111,14 +111,15 @@ async def chat(
                 except Exception:
                     pass  # title is cosmetic — never fail the request over it
 
-            pool = await get_pool()
-            await pool.enqueue_job(
-                "extract_memories",
-                user_message=request.message,
-                assistant_message=full_response,
-                workspace=routing.workspace.value,
-                assistant_message_id=str(assistant_message.id),
-            )
+            if request.message.strip():
+                pool = await get_pool()
+                await pool.enqueue_job(
+                    "extract_memories",
+                    user_message=request.message,
+                    assistant_message=full_response,
+                    workspace=routing.workspace.value,
+                    assistant_message_id=str(assistant_message.id),
+                )
 
         except Exception as e:
             yield error_event(str(e))
