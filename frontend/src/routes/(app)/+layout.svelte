@@ -10,6 +10,7 @@
 	let { children } = $props();
 	let reviewCount = $state(0);
 	let conversations = $state<ConversationSummary[]>([]);
+	let historyExpanded = $state(false);
 
 	$effect(() => {
 		if (!isAuthenticated()) goto('/login');
@@ -105,7 +106,8 @@
 				{#if conversations.length === 0}
 					<p class="px-3 text-xs" style="color: var(--color-text-muted)">No history yet</p>
 				{:else}
-					{#each conversations as conv (conv.id)}
+					{@const visible = historyExpanded ? conversations : conversations.slice(0, 3)}
+					{#each visible as conv (conv.id)}
 						{@const active = activeConversationId === conv.id}
 						<button
 							onclick={() => goto(`/${activeWorkspace}?c=${conv.id}`)}
@@ -123,6 +125,15 @@
 							</p>
 						</button>
 					{/each}
+					{#if conversations.length > 3}
+						<button
+							onclick={() => historyExpanded = !historyExpanded}
+							class="w-full text-left px-3 py-1.5 text-xs transition-colors"
+							style="color: var(--color-text-muted); opacity: 0.6"
+						>
+							{historyExpanded ? '↑ show less' : `+ ${conversations.length - 3} more`}
+						</button>
+					{/if}
 				{/if}
 			</div>
 		</div>
