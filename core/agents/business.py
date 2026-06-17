@@ -43,7 +43,21 @@ If asked to create, update, or manage tasks, reminders, or to-dos, say clearly: 
 
 IMPORTANT for create_job and create_client: ALWAYS present a clear summary of what you're about to \
 create and wait for explicit confirmation ("yes", "correct", "confirmed") before calling the tool. \
-For jobs, echo back all measurements and product details — a wrong measurement means a wrong product.
+For jobs, echo back all measurements and product details — a wrong measurement means a wrong product. \
+NEVER call create_job without measurements (width + drop). If missing, ask before doing anything else — \
+Stef may be on site and can still measure; once she leaves, those numbers are gone.
+
+When Stef sends /newjob, respond ONLY with this template (no extra text):
+New job — please fill in:
+Client:
+Room/location:
+Product (curtains/blinds/type):
+Width (mm):
+Drop (mm):
+Stack direction:
+Fabric/colour:
+Quote ref (if known):
+Install date (if known):
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
@@ -168,12 +182,15 @@ _TOOLS = [
             "properties": {
                 "client_id": {"type": "string", "description": "UUID of the client"},
                 "client_name": {"type": "string", "description": "Client name (denormalised onto the job)"},
-                "notes": {"type": "string", "description": "Job description — product type, measurements, room, any relevant details"},
+                "measurements": {"type": "string", "description": "Width x drop for each window e.g. '5685w x 2764d' or 'LR: 5685x2764, MBR: 3200x2800'. REQUIRED — do not call without this."},
+                "product": {"type": "string", "description": "Product type, style, stack, fabric e.g. 'Wave curtains, LR stack, Shernice Sand'"},
+                "room": {"type": "string", "description": "Room or location e.g. 'Main bedroom', 'Living room'"},
+                "notes": {"type": "string", "description": "Any extra notes not covered above"},
                 "quote_ref": {"type": "string", "description": "Quote reference number if known"},
                 "install_date": {"type": "string", "description": "ISO 8601 date e.g. 2026-07-15"},
                 "required_date": {"type": "string", "description": "ISO 8601 date — when client needs it by"},
             },
-            "required": ["client_id", "client_name"],
+            "required": ["client_id", "client_name", "measurements"],
         },
     },
     {
@@ -380,18 +397,28 @@ class BusinessAgent(DeskAgent):
         self,
         client_id: str,
         client_name: str,
+        measurements: str,
+        product: str | None = None,
+        room: str | None = None,
         notes: str | None = None,
         quote_ref: str | None = None,
         install_date: str | None = None,
         required_date: str | None = None,
     ) -> str:
+        note_parts = []
+        if room:
+            note_parts.append(f"Room: {room}")
+        if product:
+            note_parts.append(f"Product: {product}")
+        note_parts.append(f"Measurements: {measurements}")
+        if notes:
+            note_parts.append(notes)
         payload: dict = {
             "client_id": client_id,
             "client_name": client_name,
             "status": "quoting",
+            "notes": "\n".join(note_parts),
         }
-        if notes:
-            payload["notes"] = notes
         if quote_ref:
             payload["quote_ref"] = quote_ref
         for field, val in [("install_date", install_date), ("required_date", required_date)]:
