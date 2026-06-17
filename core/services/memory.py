@@ -16,15 +16,19 @@ async def search_memories(
     limit: int = 10,
 ) -> list[Memory]:
     query_embedding = await embed(query)
-    result = await session.execute(
-        sa.select(Memory)
-        .where(
-            Memory.confirmed == True,
-            Memory.workspace.in_([workspace, "global"]),
-        )
-        .order_by(Memory.embedding.cosine_distance(query_embedding))
-        .limit(limit)
+    base = sa.select(Memory).where(
+        Memory.confirmed == True,
+        Memory.workspace.in_([workspace, "global"]),
     )
+    if query_embedding:
+        result = await session.execute(
+            base.order_by(Memory.embedding.cosine_distance(query_embedding)).limit(limit)
+        )
+    else:
+        # Ollama unavailable — fall back to most recent memories
+        result = await session.execute(
+            base.order_by(Memory.created_at.desc()).limit(limit)
+        )
     memories = list(result.scalars().all())
     for m in memories:
         m.last_accessed_at = sa.func.now()
