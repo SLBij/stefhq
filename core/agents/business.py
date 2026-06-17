@@ -114,6 +114,7 @@ _TOOLS = [
                 "rails_received": {"type": "boolean", "description": "Mark rails as received"},
                 "blinds_received": {"type": "boolean", "description": "Mark blinds as received"},
                 "sewing_complete": {"type": "boolean", "description": "Mark sewing as complete"},
+                "final_payment_received": {"type": "boolean", "description": "Mark final payment received — also set status='complete' to close the job"},
                 "delay_note": {"type": "string", "description": "Delay message shown to client on status tracker (e.g. 'Fabric on backorder, estimated delay 1 week'). Pass empty string to clear."},
                 "status": {
                     "type": "string",
@@ -276,7 +277,7 @@ class BusinessAgent(DeskAgent):
     async def _update_job(self, job_id: str, **kwargs) -> str:
         payload = {}
         date_fields = {"install_date", "required_date"}
-        bool_fields = {"fabrics_received", "rails_received", "blinds_received", "sewing_complete"}
+        bool_fields = {"fabrics_received", "rails_received", "blinds_received", "sewing_complete", "final_payment_received"}
         for key, val in kwargs.items():
             if val is None:
                 continue
