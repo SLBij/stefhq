@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { marked } from 'marked';
-	import { getAgentName, getConversationMessages, getConversations, getRecentMemories, streamChat } from '$lib/api';
+	import { appendNote, getAgentName, getConversationMessages, getConversations, getRecentMemories, streamChat } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { historyRefresh } from '$lib/historyRefresh.svelte';
 	import { type Attachment, WORKSPACES, type Message, type Workspace } from '$lib/types';
@@ -102,6 +102,18 @@
 		e.preventDefault();
 		const text = input.trim();
 		if ((!text && pendingImages.length === 0) || isStreaming || !auth.token) return;
+
+		// Intercept /note command — append to scratchpad without sending to agent
+		if (text.startsWith('/note ')) {
+			const noteText = text.slice(6).trim();
+			if (noteText && auth.token) {
+				input = '';
+				await appendNote(auth.token, noteText);
+				append({ key: crypto.randomUUID(), id: '', role: 'system', content: `📌 Note saved: ${noteText}` });
+				scrollToBottom();
+			}
+			return;
+		}
 
 		const attachments = pendingImages.length > 0 ? [...pendingImages] : undefined;
 		input = '';
@@ -214,7 +226,11 @@
 		{/if}
 
 		{#each messages as msg (msg.key)}
-			{#if msg.role === 'user'}
+			{#if msg.role === 'system'}
+				<div class="flex justify-center">
+					<span class="text-xs px-3 py-1 rounded-full" style="background: var(--color-surface-3); color: var(--color-text-muted)">{msg.content}</span>
+				</div>
+			{:else if msg.role === 'user'}
 				<div class="flex justify-end">
 					<div class="max-w-lg flex flex-col gap-2 items-end">
 						{#if msg.attachments?.length}

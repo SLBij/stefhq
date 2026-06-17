@@ -118,6 +118,29 @@ async def get_agent_name(
     return {"name": memory.content if memory else None}
 
 
+@router.get("/pinned")
+async def get_pinned_memories(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        sa.select(Memory)
+        .where(Memory.confirmed == True, Memory.tags.contains(["pinned"]))
+        .order_by(Memory.created_at.desc())
+        .limit(20)
+    )
+    return [
+        {
+            "content": m.content,
+            "workspace": m.workspace,
+            "type": m.memory_type,
+            "confidence": m.confidence,
+            "tags": m.tags,
+        }
+        for m in result.scalars().all()
+    ]
+
+
 @router.get("/search")
 async def search(
     q: str,

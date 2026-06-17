@@ -33,7 +33,7 @@ export interface Attachment {
 export interface Message {
 	key: string;       // stable client-side key for #each
 	id: string;        // server message ID (set after done event)
-	role: 'user' | 'assistant';
+	role: 'user' | 'assistant' | 'system';
 	content: string;
 	attachments?: Attachment[];    // images sent with user message
 	streaming?: boolean;

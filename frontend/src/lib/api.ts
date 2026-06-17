@@ -146,3 +146,35 @@ export async function reviewMemory(token: string, id: string, action: 'approve' 
 		body: JSON.stringify({ action }),
 	});
 }
+
+export async function getNotes(token: string): Promise<{ content: string; updated_at: string }> {
+	const res = await fetch(`${BASE}/api/notes/`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return { content: '', updated_at: '' };
+	return res.json();
+}
+
+export async function saveNotes(token: string, content: string): Promise<void> {
+	await fetch(`${BASE}/api/notes/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ content }),
+	});
+}
+
+export async function appendNote(token: string, text: string): Promise<void> {
+	await fetch(`${BASE}/api/notes/append`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ text }),
+	});
+}
+
+export async function getPinnedMemories(token: string): Promise<SavedMemory[]> {
+	const res = await fetch(`${BASE}/api/memory/pinned`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return [];
+	return res.json();
+}

@@ -9,6 +9,7 @@ from api.chat import router as chat_router
 from api.conversations import router as conversations_router
 from api.headspace import router as headspace_router
 from api.memory import router as memory_router
+from api.notes import router as notes_router
 from api.tasks import router as tasks_router
 from database import init_db
 from workers.arq_pool import close_pool, get_pool
@@ -38,6 +39,7 @@ app.include_router(chat_router, prefix="/api")
 app.include_router(conversations_router, prefix="/api")
 app.include_router(headspace_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
+app.include_router(notes_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 
 
