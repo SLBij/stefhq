@@ -5,7 +5,7 @@
 	import { getAgentName, getConversationMessages, getConversations, getRecentMemories, streamChat } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { historyRefresh } from '$lib/historyRefresh.svelte';
-	import { WORKSPACES, type Message, type Workspace } from '$lib/types';
+	import { type Attachment, WORKSPACES, type Message, type Workspace } from '$lib/types';
 
 	let memoryOpen = $state<Record<string, boolean>>({});
 
@@ -20,6 +20,8 @@
 	let isStreaming = $state(false);
 	let isLoadingHistory = $state(false);
 	let agentName = $state<string | null>(null);
+	let pendingImages = $state<Attachment[]>([]);
+	let fileInput: HTMLInputElement;
 	let viewport: HTMLDivElement;
 
 	$effect(() => {
@@ -77,20 +79,41 @@
 		messages[messages.length - 1] = updater(messages[messages.length - 1]);
 	}
 
+	function handleFileSelect(e: Event) {
+		const files = (e.target as HTMLInputElement).files;
+		if (!files) return;
+		for (const file of files) {
+			if (!file.type.startsWith('image/')) continue;
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = reader.result as string;
+				// dataUrl is "data:<media_type>;base64,<data>" — strip the prefix
+				const commaIdx = dataUrl.indexOf(',');
+				const data = dataUrl.slice(commaIdx + 1);
+				pendingImages.push({ type: 'image', media_type: file.type, data, name: file.name });
+			};
+			reader.readAsDataURL(file);
+		}
+		// Reset so the same file can be re-selected
+		(e.target as HTMLInputElement).value = '';
+	}
+
 	async function send(e: SubmitEvent) {
 		e.preventDefault();
 		const text = input.trim();
-		if (!text || isStreaming || !auth.token) return;
+		if ((!text && pendingImages.length === 0) || isStreaming || !auth.token) return;
 
+		const attachments = pendingImages.length > 0 ? [...pendingImages] : undefined;
 		input = '';
+		pendingImages = [];
 		isStreaming = true;
 
-		append({ key: crypto.randomUUID(), id: '', role: 'user', content: text });
+		append({ key: crypto.randomUUID(), id: '', role: 'user', content: text, attachments });
 		append({ key: crypto.randomUUID(), id: '', role: 'assistant', content: '', streaming: true });
 		scrollToBottom();
 
 		try {
-			for await (const { event, data } of streamChat(auth.token, text, workspace, conversationId)) {
+			for await (const { event, data } of streamChat(auth.token, text, workspace, conversationId, attachments)) {
 				if (event === 'token') {
 					updateLast((m) => ({ ...m, content: m.content + (data.content ?? '') }));
 					scrollToBottom();
@@ -193,9 +216,25 @@
 		{#each messages as msg (msg.key)}
 			{#if msg.role === 'user'}
 				<div class="flex justify-end">
-					<div class="max-w-lg px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
-						style="background: var(--color-surface-3); color: var(--color-text)">
-						{msg.content}
+					<div class="max-w-lg flex flex-col gap-2 items-end">
+						{#if msg.attachments?.length}
+							<div class="flex flex-wrap gap-1.5 justify-end">
+								{#each msg.attachments as att}
+									<img
+										src="data:{att.media_type};base64,{att.data}"
+										alt={att.name ?? 'image'}
+										class="rounded-xl object-cover"
+										style="max-width: 200px; max-height: 200px;"
+									/>
+								{/each}
+							</div>
+						{/if}
+						{#if msg.content}
+							<div class="px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
+								style="background: var(--color-surface-3); color: var(--color-text)">
+								{msg.content}
+							</div>
+						{/if}
 					</div>
 				</div>
 			{:else}
@@ -264,7 +303,48 @@
 	</div>
 
 	<form onsubmit={send} class="px-6 py-4 shrink-0" style="border-top: 1px solid var(--color-border)">
+		<!-- Image previews -->
+		{#if pendingImages.length > 0}
+			<div class="flex flex-wrap gap-2 mb-2">
+				{#each pendingImages as img, i}
+					<div class="relative">
+						<img
+							src="data:{img.media_type};base64,{img.data}"
+							alt={img.name ?? 'image'}
+							class="rounded-lg object-cover"
+							style="width: 56px; height: 56px;"
+						/>
+						<button
+							type="button"
+							onclick={() => pendingImages.splice(i, 1)}
+							class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-xs leading-none"
+							style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text-muted)"
+						>×</button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+
 		<div class="flex gap-3 items-end">
+			<!-- Hidden file input -->
+			<input
+				bind:this={fileInput}
+				type="file"
+				accept="image/*"
+				multiple
+				class="hidden"
+				onchange={handleFileSelect}
+			/>
+			<button
+				type="button"
+				onclick={() => fileInput.click()}
+				disabled={isStreaming}
+				class="px-3 py-3 rounded-xl text-sm transition-colors disabled:opacity-30 shrink-0"
+				style="background: var(--color-surface-3); border: 1px solid var(--color-border); color: var(--color-text-muted)"
+				title="Attach image"
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+			</button>
 			<textarea
 				bind:value={input}
 				onkeydown={handleKeydown}
@@ -276,7 +356,7 @@
 			></textarea>
 			<button
 				type="submit"
-				disabled={isStreaming || !input.trim()}
+				disabled={isStreaming || (!input.trim() && pendingImages.length === 0)}
 				class="px-4 py-3 rounded-xl text-sm font-medium transition-opacity disabled:opacity-30 shrink-0"
 				style="background: {meta.color}; color: #0d0d0f;"
 			>

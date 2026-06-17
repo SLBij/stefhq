@@ -36,6 +36,7 @@ class RoundTableAgent(DeskAgent):
         message: str,
         context: dict,
         session: AsyncSession,
+        attachments: list | None = None,
     ) -> AsyncIterator[ServerSentEvent]:
         memory_context = "\n".join(f"- {m['content']}" for m in context.get("memories", []))
         system = self.system_prompt
@@ -55,7 +56,7 @@ class RoundTableAgent(DeskAgent):
                 if project_blocks:
                     system += "\n\n## Project context (live from GitHub)\n\n" + "\n\n".join(project_blocks)
 
-        messages = [*context.get("history", []), {"role": "user", "content": message}]
+        messages = [*context.get("history", []), {"role": "user", "content": self._user_content(message, attachments)}]
 
         try:
             while True:

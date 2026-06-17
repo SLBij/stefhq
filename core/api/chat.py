@@ -79,7 +79,7 @@ async def chat(
 
             agent = get_agent(routing.workspace)
             full_response = ""
-            async for event in agent.handle(request.message, context, session):
+            async for event in agent.handle(request.message, context, session, request.attachments):
                 if event.event == "token":
                     full_response += json.loads(event.data).get("content", "")
                 yield event

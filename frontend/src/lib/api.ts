@@ -1,4 +1,4 @@
-import type { ActivityEntry, ConversationSummary, Message, SavedMemory, TaskItem, Workspace } from './types';
+import type { ActivityEntry, Attachment, ConversationSummary, Message, SavedMemory, TaskItem, Workspace } from './types';
 
 import { PUBLIC_API_BASE } from '$env/static/public';
 const BASE = PUBLIC_API_BASE;
@@ -19,6 +19,7 @@ export async function* streamChat(
 	message: string,
 	workspace: Workspace,
 	conversationId?: string,
+	attachments?: Attachment[],
 ): AsyncGenerator<{ event: string; data: Record<string, string> }> {
 	const res = await fetch(`${BASE}/api/chat/`, {
 		method: 'POST',
@@ -26,7 +27,12 @@ export async function* streamChat(
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`,
 		},
-		body: JSON.stringify({ message, workspace, conversation_id: conversationId ?? null }),
+		body: JSON.stringify({
+			message,
+			workspace,
+			conversation_id: conversationId ?? null,
+			attachments: attachments?.length ? attachments : null,
+		}),
 	});
 
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -23,11 +23,19 @@ export interface SavedMemory {
 	tags: string[];
 }
 
+export interface Attachment {
+	type: 'image';
+	media_type: string;
+	data: string;      // base64
+	name?: string;     // original filename, for display
+}
+
 export interface Message {
 	key: string;       // stable client-side key for #each
 	id: string;        // server message ID (set after done event)
 	role: 'user' | 'assistant';
 	content: string;
+	attachments?: Attachment[];    // images sent with user message
 	streaming?: boolean;
 	status?: string;
 	memories?: SavedMemory[];      // populated after worker runs

@@ -239,13 +239,14 @@ class InboxAgent(DeskAgent):
         message: str,
         context: dict,
         session: AsyncSession,
+        attachments: list | None = None,
     ) -> AsyncIterator[ServerSentEvent]:
         memory_context = "\n".join(f"- {m['content']}" for m in context.get("memories", []))
         system = self.system_prompt
         if memory_context:
             system += f"\n\nRelevant context from memory:\n{memory_context}"
 
-        messages = [*context.get("history", []), {"role": "user", "content": message}]
+        messages = [*context.get("history", []), {"role": "user", "content": self._user_content(message, attachments)}]
 
         try:
             while True:
