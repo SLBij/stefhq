@@ -781,7 +781,8 @@ class BusinessAgent(DeskAgent):
     ) -> AsyncIterator[ServerSentEvent]:
         user_id: uuid.UUID | None = context.get("user_id")
         memory_context = "\n".join(f"- {m['content']}" for m in context.get("memories", []))
-        system = self.system_prompt
+        current_dt = context.get("current_datetime", "")
+        system = f"Current date and time: {current_dt}\n\n" + self.system_prompt if current_dt else self.system_prompt
         if memory_context:
             system += f"\n\nRelevant context from memory:\n{memory_context}"
 

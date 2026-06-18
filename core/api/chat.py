@@ -76,6 +76,9 @@ async def chat(
                 entities=routing.entities,
             )
             context["user_id"] = user.id
+            from datetime import datetime, timezone, timedelta
+            _SAST = timezone(timedelta(hours=2))
+            context["current_datetime"] = datetime.now(_SAST).strftime("%A, %d %B %Y at %H:%M SAST")
             yield status_event("Context assembled")
 
             agent = get_agent(routing.workspace)
