@@ -11,7 +11,7 @@ from config import settings
 from database import async_session_factory
 from services.memory import CONFIDENCE_THRESHOLD, queue_for_review, save_memory
 from services.memory_extractor import extract_from_exchange
-from workers.briefing_worker import send_morning_briefing
+from workers.briefing_worker import send_morning_briefing, send_telegram_reminder
 
 
 async def extract_memories(
@@ -54,7 +54,7 @@ async def extract_memories(
 
 
 class WorkerSettings:
-    functions = [extract_memories, send_morning_briefing]
+    functions = [extract_memories, send_morning_briefing, send_telegram_reminder]
     cron_jobs = [
         cron(send_morning_briefing, hour=6, minute=15),  # 8:15am SAST (UTC+2)
     ]

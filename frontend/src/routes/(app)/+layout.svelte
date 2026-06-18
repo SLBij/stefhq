@@ -166,6 +166,13 @@
 					</span>
 				{/if}
 			</a>
+			<a
+				href="/google-connect"
+				class="px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors"
+				style="color: var(--color-text-muted)"
+			>
+				<span>Google account</span>
+			</a>
 			<button
 				onclick={signOut}
 				class="px-3 py-2 rounded-lg text-xs text-left transition-colors"

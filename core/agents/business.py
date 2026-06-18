@@ -10,9 +10,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.base import DeskAgent
 from agents.router import Workspace
 from config import settings
+from integrations.google import (
+    calendar_create_event,
+    calendar_list_events,
+    get_access_token,
+    gmail_create_draft,
+    gmail_send_draft,
+)
 from models.db import Task
 from services.activity import log_activity
 from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
+from services.pending_events import (
+    pop_pending_email,
+    pop_pending_event,
+    store_pending_email,
+    store_pending_event,
+)
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
 _SYSTEM = """You are Stef's business assistant for Certain Curtains — her custom curtains and blinds business.
@@ -33,10 +46,15 @@ Tools:
 - update_client_notes: update notes on a client record — requires client_id from search_clients
 - create_client: add a new client to the CRM — always search first to avoid duplicates
 - create_job: add a new job for an existing client — ALWAYS summarise details and get explicit confirmation before calling
+- compose_email: draft an email and save it to Gmail Drafts — show the full draft, then tell Stef to open Gmail to review and send. Do NOT offer to send programmatically.
+- propose_calendar_event: propose an install/site visit event — ALWAYS show full details and wait for confirmation before calling confirm_calendar_event
+- confirm_calendar_event: create a proposed event in Google Calendar — ONLY call after Stef explicitly confirms
+- list_upcoming_events: check Google Calendar for upcoming events (scheduling, availability)
+- schedule_reminder: schedule a Telegram reminder at a specific date/time — use for follow-ups, deadlines, anything time-based
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
-and day-to-day business decisions. Be practical and direct — Stef runs this herself and doesn't need \
-corporate-speak, just useful answers.
+email drafting, calendar management, and day-to-day business decisions. Be practical and direct — Stef \
+runs this herself and doesn't need corporate-speak, just useful answers.
 
 If asked to create, update, or manage tasks, reminders, or to-dos, say clearly: "That lives in Inbox \
 — switch there and I can help you with the CRM side." Never claim you can't persist data generally.
@@ -46,6 +64,17 @@ create and wait for explicit confirmation ("yes", "correct", "confirmed") before
 For jobs, echo back all measurements and product details — a wrong measurement means a wrong product. \
 NEVER call create_job without measurements (width + drop). If missing, ask before doing anything else — \
 Stef may be on site and can still measure; once she leaves, those numbers are gone.
+
+IMPORTANT for email/calendar tools:
+- For compose_email: write professional, concise business emails. After calling compose_email, display \
+the FULL draft clearly (To, Subject, Body) and tell Stef to open Gmail Drafts to add any attachments \
+and send. NEVER offer to send programmatically — sending is always manual for now.
+- For propose_calendar_event: display the full event details (title, date/time, location, notes) and \
+say "Reply 'add it' to confirm." NEVER call confirm_calendar_event without explicit confirmation.
+- Customer email addresses go in the event description/notes, NOT as attendees. Stef will add them \
+manually once she's verified the event is correct.
+- All times are SAST (UTC+2, Africa/Johannesburg). Use ISO 8601 with +02:00 offset.
+- After sending email, call log_communication to record it against the job (type: "email").
 
 When Stef sends /newjob, respond ONLY with this template (no extra text):
 New job — please fill in:
@@ -208,6 +237,85 @@ _TOOLS = [
                 "note": {"type": "string", "description": "What was discussed or agreed"},
             },
             "required": ["job_id", "type", "note"],
+        },
+    },
+    {
+        "name": "compose_email",
+        "description": (
+            "Compose an email and save it as a Gmail draft. "
+            "Display the full draft (To, Subject, Body) so Stef can review it, "
+            "then tell her to open Gmail Drafts to add attachments and send. "
+            "Do NOT offer to send it — sending is manual for now."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to_email": {"type": "string", "description": "Recipient email address"},
+                "to_name": {"type": "string", "description": "Recipient display name, e.g. 'Sarah van der Berg'"},
+                "subject": {"type": "string", "description": "Email subject line"},
+                "body": {"type": "string", "description": "Email body — plain text, professional tone. Sign off as Stef / Certain Curtains."},
+                "cc": {"type": "string", "description": "CC email address, if any"},
+            },
+            "required": ["to_email", "subject", "body"],
+        },
+    },
+    {
+        "name": "propose_calendar_event",
+        "description": (
+            "Propose a Google Calendar event (install appointment, site visit, measure, etc). "
+            "Returns a pending_id and full event details for review. "
+            "ALWAYS display the full details and wait for explicit confirmation before calling confirm_calendar_event. "
+            "Put client contact info in the description, NOT as attendees."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Event title, e.g. 'Install — Sarah van der Berg'"},
+                "start_datetime": {"type": "string", "description": "ISO 8601 in SAST, e.g. '2026-06-25T14:00:00+02:00'"},
+                "end_datetime": {"type": "string", "description": "ISO 8601 in SAST, e.g. '2026-06-25T16:00:00+02:00'"},
+                "description": {"type": "string", "description": "Notes — include client name, address, what's being installed, client phone/email"},
+                "location": {"type": "string", "description": "Install address"},
+            },
+            "required": ["title", "start_datetime", "end_datetime"],
+        },
+    },
+    {
+        "name": "confirm_calendar_event",
+        "description": (
+            "Create a previously proposed calendar event in Google Calendar. "
+            "ONLY call after Stef has explicitly confirmed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pending_id": {"type": "string", "description": "Pending event ID from propose_calendar_event"},
+            },
+            "required": ["pending_id"],
+        },
+    },
+    {
+        "name": "list_upcoming_events",
+        "description": "List upcoming Google Calendar events to check schedule or availability before proposing a time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days_ahead": {"type": "integer", "description": "How many days ahead to look (default 7, max 30)"},
+            },
+        },
+    },
+    {
+        "name": "schedule_reminder",
+        "description": (
+            "Schedule a Telegram reminder to be sent at a specific date and time. "
+            "Use for follow-ups (e.g. 'check in with Angelique on Monday'), payment chasers, deadlines, or any time-based nudge."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Reminder text, e.g. 'Follow up with Angelique re: provisional install date'"},
+                "remind_at": {"type": "string", "description": "ISO 8601 datetime in SAST (UTC+2), e.g. '2026-06-23T15:00:00+02:00'"},
+            },
+            "required": ["message", "remind_at"],
         },
     },
 ]
@@ -439,6 +547,111 @@ class BusinessAgent(DeskAgent):
         record = created[0] if isinstance(created, list) else created
         return json.dumps({"id": record["id"], "client_name": record["client_name"], "status": record["status"]})
 
+    async def _compose_email(
+        self,
+        user_id: uuid.UUID,
+        session: AsyncSession,
+        to_email: str,
+        subject: str,
+        body: str,
+        to_name: str | None = None,
+        cc: str | None = None,
+    ) -> str:
+        access_token = await get_access_token(user_id, session)
+        result = await gmail_create_draft(access_token, to_email, subject, body, to_name, cc)
+        pending_email_id = await store_pending_email({
+            "draft_id": result["draft_id"],
+            "to_email": to_email,
+            "to_name": to_name,
+            "subject": subject,
+        })
+        to_display = f"{to_name} <{to_email}>" if to_name else to_email
+        return (
+            f"Draft saved to Gmail.\n\n"
+            f"**To:** {to_display}\n"
+            + (f"**Cc:** {cc}\n" if cc else "")
+            + f"**Subject:** {subject}\n\n"
+            f"{body}"
+        )
+
+    async def _send_email(
+        self, user_id: uuid.UUID, session: AsyncSession, pending_email_id: str
+    ) -> str:
+        details = await pop_pending_email(pending_email_id)
+        if details is None:
+            return "Pending email not found — it may have expired. Please use compose_email again."
+        draft_id = details.get("draft_id")
+        if not draft_id:
+            return f"Stored email is missing draft_id. Stored keys: {list(details.keys())}. Please compose again."
+        access_token = await get_access_token(user_id, session)
+        await gmail_send_draft(access_token, draft_id)
+        return f"Email sent to {details.get('to_name') or details['to_email']} — Subject: {details['subject']}"
+
+    async def _propose_calendar_event(
+        self,
+        title: str,
+        start_datetime: str,
+        end_datetime: str,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> str:
+        details = {
+            "title": title,
+            "start_datetime": start_datetime,
+            "end_datetime": end_datetime,
+            "description": description,
+            "location": location,
+        }
+        pending_id = await store_pending_event(details)
+        preview_lines = [
+            f"pending_id: {pending_id}",
+            "",
+            f"**Event:** {title}",
+            f"**Start:** {start_datetime}",
+            f"**End:** {end_datetime}",
+        ]
+        if location:
+            preview_lines.append(f"**Location:** {location}")
+        if description:
+            preview_lines.append(f"**Notes:** {description}")
+        return "\n".join(preview_lines)
+
+    async def _confirm_calendar_event(
+        self, user_id: uuid.UUID, session: AsyncSession, pending_id: str
+    ) -> str:
+        details = await pop_pending_event(pending_id)
+        if details is None:
+            return "Pending event not found — it may have expired (24h limit). Please propose it again."
+        access_token = await get_access_token(user_id, session)
+        result = await calendar_create_event(
+            access_token,
+            title=details["title"],
+            start_datetime=details["start_datetime"],
+            end_datetime=details["end_datetime"],
+            description=details.get("description"),
+            location=details.get("location"),
+        )
+        link = result.get("html_link", "")
+        return f"Event created: {details['title']}\n{link}"
+
+    async def _list_upcoming_events(
+        self, user_id: uuid.UUID, session: AsyncSession, days_ahead: int = 7
+    ) -> str:
+        access_token = await get_access_token(user_id, session)
+        events = await calendar_list_events(access_token, days_ahead)
+        if not events:
+            return f"No events in the next {days_ahead} days."
+        return json.dumps(events)
+
+    async def _schedule_reminder(self, message: str, remind_at: str) -> str:
+        from workers.arq_pool import get_pool
+        dt = datetime.fromisoformat(remind_at)
+        dt_utc = dt.astimezone(timezone.utc)
+        pool = await get_pool()
+        await pool.enqueue_job("send_telegram_reminder", message=message, _defer_until=dt_utc)
+        local_str = dt.strftime("%-d %b at %-I:%M %p")
+        return f"Reminder set for {local_str} SAST: {message}"
+
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             # Read current communications array
@@ -470,9 +683,15 @@ class BusinessAgent(DeskAgent):
 
         return f"Communication logged: [{comm_type}] {note}"
 
-    _WRITE_TOOLS = {"create_task", "update_job", "update_client_notes", "log_communication", "create_client", "create_job"}
+    _WRITE_TOOLS = {
+        "create_task", "update_job", "update_client_notes", "log_communication",
+        "create_client", "create_job", "compose_email", "send_email",
+        "propose_calendar_event", "confirm_calendar_event", "schedule_reminder",
+    }
 
-    async def _execute_tool(self, name: str, tool_input: dict, session: AsyncSession) -> str:
+    async def _execute_tool(
+        self, name: str, tool_input: dict, session: AsyncSession, user_id: uuid.UUID | None = None
+    ) -> str:
         try:
             if name == "save_agent_name":
                 return await save_agent_name(tool_input["name"], self.workspace.value, session)
@@ -512,6 +731,43 @@ class BusinessAgent(DeskAgent):
                 return await self._log_communication(
                     tool_input["job_id"], tool_input["type"], tool_input["note"]
                 )
+            elif name == "compose_email":
+                if not user_id:
+                    return "Cannot compose email: user context missing."
+                result = await self._compose_email(user_id, session, **tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"compose_email: {tool_input.get('subject', '')[:80]}")
+                return result
+            elif name == "send_email":
+                if not user_id:
+                    return "Cannot send email: user context missing."
+                result = await self._send_email(user_id, session, tool_input["pending_email_id"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"send_email: pending {tool_input['pending_email_id'][:12]}…")
+                return result
+            elif name == "propose_calendar_event":
+                result = await self._propose_calendar_event(**tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"propose_event: {tool_input.get('title', '')[:80]}")
+                return result
+            elif name == "confirm_calendar_event":
+                if not user_id:
+                    return "Cannot create calendar event: user context missing."
+                result = await self._confirm_calendar_event(user_id, session, tool_input["pending_id"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"confirm_event: {result[:120]}")
+                return result
+            elif name == "list_upcoming_events":
+                if not user_id:
+                    return "Cannot access calendar: user context missing."
+                return await self._list_upcoming_events(
+                    user_id, session, tool_input.get("days_ahead", 7)
+                )
+            elif name == "schedule_reminder":
+                result = await self._schedule_reminder(tool_input["message"], tool_input["remind_at"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"schedule_reminder: {tool_input.get('remind_at', '')} — {tool_input.get('message', '')[:60]}")
+                return result
             return "Unknown tool"
         except Exception as e:
             return f"Tool error: {e}"
@@ -523,6 +779,7 @@ class BusinessAgent(DeskAgent):
         session: AsyncSession,
         attachments: list | None = None,
     ) -> AsyncIterator[ServerSentEvent]:
+        user_id: uuid.UUID | None = context.get("user_id")
         memory_context = "\n".join(f"- {m['content']}" for m in context.get("memories", []))
         system = self.system_prompt
         if memory_context:
@@ -549,8 +806,12 @@ class BusinessAgent(DeskAgent):
                 tool_results = []
                 for block in final.content:
                     if block.type == "tool_use":
-                        yield status_event("Checking CRM…")
-                        result = await self._execute_tool(block.name, dict(block.input), session)
+                        _status = "Sending email…" if block.name in ("send_email", "compose_email") \
+                            else "Updating calendar…" if block.name in ("confirm_calendar_event", "propose_calendar_event", "list_upcoming_events") \
+                            else "Setting reminder…" if block.name == "schedule_reminder" \
+                            else "Checking CRM…"
+                        yield status_event(_status)
+                        result = await self._execute_tool(block.name, dict(block.input), session, user_id)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,

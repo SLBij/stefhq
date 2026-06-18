@@ -10,6 +10,20 @@ from database import async_session_factory
 from models.db import Task
 
 
+async def send_telegram_reminder(ctx, message: str):
+    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+        return
+    async with httpx.AsyncClient(timeout=10) as http:
+        await http.post(
+            f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
+            json={
+                "chat_id": settings.telegram_chat_id,
+                "text": f"⏰ *Reminder*\n\n{message}",
+                "parse_mode": "Markdown",
+            },
+        )
+
+
 async def send_morning_briefing(ctx):
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         return

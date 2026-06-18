@@ -7,6 +7,7 @@ from api.activity import router as activity_router
 from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.conversations import router as conversations_router
+from api.google_auth import router as google_auth_router
 from api.headspace import router as headspace_router
 from api.memory import router as memory_router
 from api.notes import router as notes_router
@@ -37,6 +38,7 @@ app.include_router(activity_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(conversations_router, prefix="/api")
+app.include_router(google_auth_router, prefix="/api")
 app.include_router(headspace_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(notes_router, prefix="/api")

@@ -75,6 +75,7 @@ async def chat(
                 conversation=conversation,
                 entities=routing.entities,
             )
+            context["user_id"] = user.id
             yield status_event("Context assembled")
 
             agent = get_agent(routing.workspace)

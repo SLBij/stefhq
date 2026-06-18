@@ -171,6 +171,22 @@ export async function appendNote(token: string, text: string): Promise<void> {
 	});
 }
 
+export async function getGoogleAuthUrl(token: string): Promise<{ url: string }> {
+	const res = await fetch(`${BASE}/api/oauth/google/authorize`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) throw new Error('Failed to get Google auth URL');
+	return res.json();
+}
+
+export async function getGoogleStatus(token: string): Promise<{ connected: boolean }> {
+	const res = await fetch(`${BASE}/api/oauth/google/status`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return { connected: false };
+	return res.json();
+}
+
 export async function getPinnedMemories(token: string): Promise<SavedMemory[]> {
 	const res = await fetch(`${BASE}/api/memory/pinned`, {
 		headers: { Authorization: `Bearer ${token}` },

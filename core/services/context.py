@@ -48,7 +48,7 @@ async def assemble_context(
             {"content": m.content, "type": m.memory_type, "workspace": m.workspace}
             for m in merged
         ],
-        "history": [{"role": msg.role, "content": msg.content} for msg in history],
+        "history": [{"role": msg.role, "content": msg.content} for msg in history if msg.content],
         "entities": entities,
         "workspace": workspace.value,
     }
