@@ -1051,12 +1051,12 @@ class BusinessAgent(DeskAgent):
             ids_str = f"({','.join(j['id'] for j in jobs)})"
             rw = await client.get(
                 f"{self._base()}/job_windows", headers=self._headers(),
-                params={"job_id": f"in.{ids_str}", "select": "job_id,room_label,fabric_name,fabric_metres,lining_type,lining_fabric,lining_metres,rail_code,rail_type"},
+                params={"job_id": f"in.{ids_str}", "select": "*"},
             )
             rw.raise_for_status()
             rb = await client.get(
                 f"{self._base()}/job_blinds", headers=self._headers(),
-                params={"job_id": f"in.{ids_str}", "select": "job_id,room_label,blind_type,colour,width_mm,drop_mm"},
+                params={"job_id": f"in.{ids_str}", "select": "*"},
             )
             rb.raise_for_status()
             rp = await client.get(
