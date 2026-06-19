@@ -1282,20 +1282,25 @@ class BusinessAgent(DeskAgent):
             item_lines.append(f"{item.get('code', '—')} | {item.get('description', '—')} | {item.get('qty', '—')} | {price}")
         item_table = "\n".join(item_lines)
         template = supplier.get("template") or ""
+        account = supplier.get("account_number") or ""
+        def _fill(text: str) -> str:
+            return (text
+                .replace("{items}", item_table).replace("{job_ref}", job_refs_str)
+                .replace("{account_number}", account).replace("{date}", today)
+                .replace("[reference]", job_refs_str).replace("[date]", today)
+                .replace("[account]", account).replace("[account_number]", account))
         if template:
-            body = template.replace("{items}", item_table).replace("{job_ref}", job_refs_str) \
-                           .replace("{account_number}", supplier.get("account_number") or "") \
-                           .replace("{date}", today)
+            body = _fill(template)
             if item_table not in body:
                 body = f"{body}\n\n{item_table}"
         else:
             body = (
                 f"Dear {supplier.get('name', 'Sir/Madam')},\n\n"
                 f"Please find our order details below.\n\n"
-                f"Job Reference(s): {job_refs_str}\nDate: {today}\nAccount: {supplier.get('account_number', '')}\n\n"
+                f"Job Reference(s): {job_refs_str}\nDate: {today}\nAccount: {account}\n\n"
                 f"{item_table}\n\nKind regards,\nStef\nCertain Curtains"
             )
-        subject = supplier.get("subject_line") or f"Order — {job_refs_str} — {today}"
+        subject = _fill(supplier.get("subject_line") or f"Order — {job_refs_str} — {today}")
         result = await self._compose_email(user_id, session, to_email=to_email, subject=subject, body=body, to_name=supplier.get("name"))
         return f"Supplier order email drafted.\n\n{result}"
 
