@@ -15,6 +15,8 @@ from integrations.google import (
     calendar_list_events,
     get_access_token,
     gmail_create_draft,
+    gmail_get_message,
+    gmail_list_messages,
     gmail_send_draft,
 )
 from models.db import Task
@@ -50,6 +52,8 @@ Tools:
 - propose_calendar_event: propose an install/site visit event — ALWAYS show full details and wait for confirmation before calling confirm_calendar_event
 - confirm_calendar_event: create a proposed event in Google Calendar — ONLY call after Stef explicitly confirms
 - list_upcoming_events: check Google Calendar for upcoming events (scheduling, availability)
+- list_emails: check the inbox — list recent emails with From/Subject/Date/snippet. Useful for "any new emails?", "what's in the inbox?", checking for replies
+- read_email: read the full body of a specific email by ID (from list_emails)
 - schedule_reminder: schedule a Telegram reminder at a specific date/time — use for follow-ups, deadlines, anything time-based
 - list_reminders: show all pending business reminders not yet fired
 - cancel_reminder: cancel a pending reminder by ID (get ID from list_reminders)
@@ -303,6 +307,34 @@ _TOOLS = [
             "properties": {
                 "days_ahead": {"type": "integer", "description": "How many days ahead to look (default 7, max 30)"},
             },
+        },
+    },
+    {
+        "name": "list_emails",
+        "description": "List recent Gmail inbox emails. Returns From, Subject, Date, and a snippet per message. Use for 'any new emails?', 'check the inbox', or before reading a specific one.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query, e.g. 'in:inbox is:unread', 'from:someone@example.com'. Defaults to 'in:inbox'.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Number of emails to return (1–20, default 10).",
+                },
+            },
+        },
+    },
+    {
+        "name": "read_email",
+        "description": "Read the full body of a specific email by its ID (from list_emails).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "email_id": {"type": "string", "description": "Gmail message ID from list_emails"},
+            },
+            "required": ["email_id"],
         },
     },
     {
@@ -658,6 +690,23 @@ class BusinessAgent(DeskAgent):
             return f"No events in the next {days_ahead} days."
         return json.dumps(events)
 
+    async def _list_emails(
+        self, user_id: uuid.UUID, session: AsyncSession,
+        query: str = "in:inbox", max_results: int = 10,
+    ) -> str:
+        access_token = await get_access_token(user_id, session)
+        emails = await gmail_list_messages(access_token, query, max_results)
+        if not emails:
+            return "No emails found."
+        return json.dumps(emails)
+
+    async def _read_email(
+        self, user_id: uuid.UUID, session: AsyncSession, email_id: str
+    ) -> str:
+        access_token = await get_access_token(user_id, session)
+        email = await gmail_get_message(access_token, email_id)
+        return json.dumps(email)
+
     async def _schedule_reminder(self, session: AsyncSession, message: str, remind_at: str) -> str:
         from services.reminders import create_reminder, set_arq_job_id
         from workers.arq_pool import get_pool
@@ -804,6 +853,18 @@ class BusinessAgent(DeskAgent):
                 return await self._list_upcoming_events(
                     user_id, session, tool_input.get("days_ahead", 7)
                 )
+            elif name == "list_emails":
+                if not user_id:
+                    return "Cannot access email: user context missing."
+                return await self._list_emails(
+                    user_id, session,
+                    query=tool_input.get("query", "in:inbox"),
+                    max_results=tool_input.get("max_results", 10),
+                )
+            elif name == "read_email":
+                if not user_id:
+                    return "Cannot access email: user context missing."
+                return await self._read_email(user_id, session, tool_input["email_id"])
             elif name == "schedule_reminder":
                 result = await self._schedule_reminder(session, tool_input["message"], tool_input["remind_at"])
                 await log_activity(session, "web", self.workspace.value, "tool_call",
@@ -853,6 +914,7 @@ class BusinessAgent(DeskAgent):
                 for block in final.content:
                     if block.type == "tool_use":
                         _status = "Sending email…" if block.name in ("send_email", "compose_email") \
+                            else "Checking inbox…" if block.name in ("list_emails", "read_email") \
                             else "Updating calendar…" if block.name in ("confirm_calendar_event", "propose_calendar_event", "list_upcoming_events") \
                             else "Setting reminder…" if block.name == "schedule_reminder" \
                             else "Checking CRM…"

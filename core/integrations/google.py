@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from models.db import GoogleToken
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar",
 ]
 
@@ -124,6 +126,82 @@ async def calendar_create_event(
         resp.raise_for_status()
         data = resp.json()
     return {"event_id": data["id"], "html_link": data.get("htmlLink", "")}
+
+
+def _extract_body(payload: dict) -> str:
+    mime = payload.get("mimeType", "")
+    if mime == "text/plain":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+    for part in payload.get("parts", []):
+        text = _extract_body(part)
+        if text:
+            return text
+    data = payload.get("body", {}).get("data", "")
+    if data:
+        return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+    return ""
+
+
+async def gmail_list_messages(
+    access_token: str,
+    query: str = "in:inbox",
+    max_results: int = 10,
+) -> list[dict]:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{_GMAIL_BASE}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"q": query, "maxResults": min(max_results, 20)},
+        )
+        if not resp.is_success:
+            raise ValueError(f"Gmail list {resp.status_code}: {resp.text}")
+        ids = resp.json().get("messages", [])
+        if not ids:
+            return []
+
+        async def _get_meta(msg_id: str) -> dict:
+            r = await client.get(
+                f"{_GMAIL_BASE}/messages/{msg_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
+            )
+            r.raise_for_status()
+            m = r.json()
+            hdrs = {h["name"]: h["value"] for h in m.get("payload", {}).get("headers", [])}
+            return {
+                "id": msg_id,
+                "from": hdrs.get("From", ""),
+                "subject": hdrs.get("Subject", "(no subject)"),
+                "date": hdrs.get("Date", ""),
+                "snippet": m.get("snippet", ""),
+            }
+
+        return list(await asyncio.gather(*[_get_meta(m["id"]) for m in ids]))
+
+
+async def gmail_get_message(access_token: str, message_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{_GMAIL_BASE}/messages/{message_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"format": "full"},
+        )
+        if not resp.is_success:
+            raise ValueError(f"Gmail read {resp.status_code}: {resp.text}")
+        data = resp.json()
+    payload = data.get("payload", {})
+    hdrs = {h["name"]: h["value"] for h in payload.get("headers", [])}
+    body = _extract_body(payload) or data.get("snippet", "")
+    return {
+        "id": message_id,
+        "from": hdrs.get("From", ""),
+        "to": hdrs.get("To", ""),
+        "subject": hdrs.get("Subject", "(no subject)"),
+        "date": hdrs.get("Date", ""),
+        "body": body[:5000],
+    }
 
 
 async def calendar_list_events(access_token: str, days_ahead: int = 7) -> list[dict]:
