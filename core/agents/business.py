@@ -1031,10 +1031,19 @@ class BusinessAgent(DeskAgent):
             po = rows[0]
             ri = await client.get(
                 f"{self._base()}/purchase_order_items", headers=self._headers(),
-                params={"po_id": f"eq.{po_id}", "select": "*", "order": "sort_order.asc"},
+                params={"po_id": f"eq.{po_id}", "select": "*"},
             )
-            ri.raise_for_status()
-            po["items"] = ri.json()
+            if not ri.is_success:
+                # Debug: fetch a sample row to expose actual field names
+                rsample = await client.get(
+                    f"{self._base()}/purchase_order_items", headers=self._headers(),
+                    params={"select": "*", "limit": "1"},
+                )
+                sample_keys = list(rsample.json()[0].keys()) if rsample.is_success and rsample.json() else []
+                po["items"] = []
+                po["items_debug"] = f"400 on purchase_order_items. Sample row fields: {sample_keys}"
+            else:
+                po["items"] = ri.json()
             rs = await client.get(
                 f"{self._base()}/suppliers", headers=self._headers(),
                 params={"id": f"eq.{po['supplier_id']}", "select": "id,name,email,account_number,subject_line,template,order_format"},
