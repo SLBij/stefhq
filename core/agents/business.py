@@ -19,7 +19,7 @@ from integrations.google import (
     gmail_list_messages,
     gmail_send_draft,
 )
-from models.db import Task
+from models.db import Note, Task
 from services.activity import log_activity
 from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent_name
 from services.pending_events import (
@@ -117,7 +117,10 @@ When drafting client emails, use compose_email with full job context — no sepa
 When creating a PO and you need to know which supplier a fabric or product belongs to, call get_product \
 with the fabric name — it returns the supplier. Do not ask Stef which supplier to use; look it up first. \
 When building PO items for a job, call get_job_materials first — it returns all fabric quantities, \
-rail codes, and blind specs already measured. Never ask Stef for quantities or codes you can look up.
+rail codes, and blind specs already measured. Never ask Stef for quantities or codes you can look up. \
+You have access to a shared scratchpad (Notes page): read_notes to read it, append_note to add a \
+timestamped entry safely, write_notes to fully rewrite it. Use this to maintain the dev handoff doc, \
+log bugs you spot, or keep running notes. Always read first before writing to avoid losing content.
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
@@ -520,6 +523,33 @@ _TOOLS = [
                 "email_id": {"type": "string", "description": "Gmail message ID from list_emails"},
             },
             "required": ["email_id"],
+        },
+    },
+    {
+        "name": "read_notes",
+        "description": "Read the full content of the shared business scratchpad (the Notes page in StefHQ). Use this to check the current dev handoff doc, running notes, or anything Stef has written there.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "append_note",
+        "description": "Append a timestamped entry to the business scratchpad. Safe — prepends without overwriting existing content. Use for quick status updates, bug reports, or adding a line to the dev handoff doc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to append (will be prefixed with timestamp automatically)"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "write_notes",
+        "description": "Overwrite the entire business scratchpad with new content. Use when restructuring or fully updating the dev handoff doc. Read the current content first so nothing is lost.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Full new content for the scratchpad (replaces everything)"},
+            },
+            "required": ["content"],
         },
     },
     {
@@ -1421,12 +1451,45 @@ class BusinessAgent(DeskAgent):
                 results = r2.json()
         return json.dumps(results) if results else f"No products found matching '{query}'."
 
+    _NOTES_SINGLETON = "00000000-0000-0000-0000-000000000001"
+
+    async def _get_or_create_note(self, session: AsyncSession) -> Note:
+        result = await session.execute(sa.select(Note).where(Note.id == self._NOTES_SINGLETON))
+        note = result.scalar_one_or_none()
+        if not note:
+            note = Note(id=self._NOTES_SINGLETON, content="")
+            session.add(note)
+            await session.flush()
+        return note
+
+    async def _read_notes(self, session: AsyncSession) -> str:
+        note = await self._get_or_create_note(session)
+        await session.commit()
+        return json.dumps({"content": note.content, "updated_at": note.updated_at.isoformat()})
+
+    async def _append_note(self, session: AsyncSession, text: str) -> str:
+        note = await self._get_or_create_note(session)
+        now = datetime.now(timezone.utc)
+        timestamp = now.strftime("%-d %b %H:%M")
+        entry = f"- **{timestamp}** {text.strip()}"
+        note.content = entry + ("\n" + note.content if note.content else "")
+        note.updated_at = now
+        await session.commit()
+        return "Note appended."
+
+    async def _write_notes(self, session: AsyncSession, content: str) -> str:
+        note = await self._get_or_create_note(session)
+        note.content = content
+        note.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        return "Notes updated."
+
     _WRITE_TOOLS = {
         "create_task", "update_job", "update_client_notes", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
         "propose_calendar_event", "confirm_calendar_event", "schedule_reminder", "cancel_reminder",
         "draft_supplier_order_email", "create_purchase_order", "add_po_items",
-        "update_po_status", "log_po_issue",
+        "update_po_status", "log_po_issue", "append_note", "write_notes",
     }
 
     async def _execute_tool(
@@ -1569,6 +1632,12 @@ class BusinessAgent(DeskAgent):
                 return await self._list_reminders(session)
             elif name == "cancel_reminder":
                 return await self._cancel_reminder(session, tool_input["reminder_id"])
+            elif name == "read_notes":
+                return await self._read_notes(session)
+            elif name == "append_note":
+                return await self._append_note(session, tool_input["text"])
+            elif name == "write_notes":
+                return await self._write_notes(session, tool_input["content"])
             return "Unknown tool"
         except Exception as e:
             return f"Tool error: {e}"
@@ -1617,6 +1686,8 @@ class BusinessAgent(DeskAgent):
                             else "Analysing jobs…" if block.name in ("get_ordering_summary", "get_jobs_needing_orders", "get_overdue_jobs", "list_unpaid_jobs", "get_job_materials") \
                             else "Updating order…" if block.name in ("create_purchase_order", "add_po_items", "update_po_status", "log_po_issue") \
                             else "Checking stock…" if block.name in ("get_stock_levels", "get_product") \
+                            else "Reading notes…" if block.name == "read_notes" \
+                            else "Updating notes…" if block.name in ("append_note", "write_notes") \
                             else "Checking CRM…"
                         yield status_event(_status)
                         result = await self._execute_tool(block.name, dict(block.input), session, user_id)
