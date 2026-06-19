@@ -372,7 +372,7 @@ _TOOLS = [
         "description": "Get all material requirements for a specific job — fabrics, linings, rails (from job_windows) and blinds (from job_blinds) with quantities and codes already filled in. Use this when building PO items for a job.",
         "input_schema": {
             "type": "object",
-            "properties": {"job_id": {"type": "string", "description": "Job UUID"}},
+            "properties": {"job_id": {"type": "string", "description": "Job UUID or quote_ref (e.g. 'CC2536') — both accepted"}},
             "required": ["job_id"],
         },
     },
@@ -1052,6 +1052,19 @@ class BusinessAgent(DeskAgent):
         return json.dumps(po)
 
     async def _get_job_materials(self, job_id: str) -> str:
+        import re
+        # If not a UUID, treat as quote_ref and look up the real ID first
+        if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', job_id, re.IGNORECASE):
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    f"{self._base()}/jobs", headers=self._headers(),
+                    params={"quote_ref": f"ilike.{job_id}", "select": "id", "limit": "1"},
+                )
+                r.raise_for_status()
+                rows = r.json()
+            if not rows:
+                return f"No job found with quote_ref '{job_id}'."
+            job_id = rows[0]["id"]
         async with httpx.AsyncClient(timeout=10) as client:
             rw = await client.get(
                 f"{self._base()}/job_windows", headers=self._headers(),
