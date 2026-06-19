@@ -1063,10 +1063,22 @@ class BusinessAgent(DeskAgent):
                 params={"job_id": f"eq.{job_id}", "select": "*", "order": "room_label.asc"},
             )
             rb.raise_for_status()
+            # Debug: if empty, fetch a sample row to expose actual field names
+            debug_info = None
+            if not rw.json() and not rb.json():
+                rsample = await client.get(
+                    f"{self._base()}/job_windows", headers=self._headers(),
+                    params={"select": "*", "limit": "1"},
+                )
+                if rsample.is_success and rsample.json():
+                    debug_info = {"sample_row_keys": list(rsample.json()[0].keys()), "queried_job_id": job_id}
         windows = rw.json()
         blinds = rb.json()
         if not windows and not blinds:
-            return "No material specs found for this job. job_windows and job_blinds are empty — specs may not have been entered yet."
+            msg = "No material specs found for this job — job_windows and job_blinds returned empty."
+            if debug_info:
+                msg += f" Debug: sample row fields are {debug_info['sample_row_keys']}. Queried job_id={debug_info['queried_job_id']}."
+            return msg
         return json.dumps({"windows": windows, "blinds": blinds})
 
     async def _get_ordering_summary(self) -> str:
