@@ -113,7 +113,9 @@ Always summarise what you're about to create/change before calling write tools. 
 You never send emails — draft_supplier_order_email and compose_email both save Gmail drafts only. \
 Stock levels are read-only; physical stock updates happen via the workshop scanner. \
 job_windows holds curtain fabrics, linings, and rail details per room. job_blinds holds blind specs. \
-When drafting client emails, use compose_email with full job context — no separate tool needed.
+When drafting client emails, use compose_email with full job context — no separate tool needed. \
+When creating a PO and you need to know which supplier a fabric or product belongs to, call get_product \
+with the fabric name — it returns the supplier. Do not ask Stef which supplier to use; look it up first.
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
