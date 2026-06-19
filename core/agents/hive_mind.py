@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import httpx
@@ -36,6 +37,8 @@ use for "what's on my plate", "catch me up", "what do I have this week", and sim
 - get_car_service: fetch service history and service items for all cars (Honda, Lexus, Fiesta)
 - get_spider_info: fetch tarantula data including last fed and last moult dates — \
 pass a name/code to filter to one spider, or leave blank for the full crew
+- schedule_reminder: schedule a Telegram reminder at a specific date and time — use whenever Stef \
+mentions needing a nudge, follow-up, or time-based reminder
 
 Use save_memory proactively when Stef shares facts, preferences, decisions, or anything she'd expect \
 you to recall later. Don't wait to be asked."""
@@ -113,6 +116,18 @@ _TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "schedule_reminder",
+        "description": "Schedule a Telegram reminder at a specific date and time. Use whenever Stef mentions needing a nudge, follow-up, or time-based reminder.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Reminder text"},
+                "remind_at": {"type": "string", "description": "ISO 8601 datetime in SAST (UTC+2), e.g. '2026-06-23T15:00:00+02:00'"},
+            },
+            "required": ["message", "remind_at"],
+        },
+    },
 ]
 
 
@@ -128,7 +143,8 @@ class HiveMindAgent(DeskAgent):
         attachments: list | None = None,
     ) -> AsyncIterator[ServerSentEvent]:
         memory_context = "\n".join(f"- {m['content']}" for m in context.get("memories", []))
-        system = self.system_prompt
+        current_dt = context.get("current_datetime", "")
+        system = f"Current date and time: {current_dt}\n\n" + self.system_prompt if current_dt else self.system_prompt
         if memory_context:
             system += f"\n\nRelevant context from memory:\n{memory_context}"
 
@@ -219,7 +235,19 @@ class HiveMindAgent(DeskAgent):
         if name == "get_spider_info":
             return await get_spider_info(args.get("name_filter", ""))
 
+        if name == "schedule_reminder":
+            return await self._schedule_reminder(args["message"], args["remind_at"])
+
         return f"Unknown tool: {name}"
+
+    async def _schedule_reminder(self, message: str, remind_at: str) -> str:
+        from workers.arq_pool import get_pool
+        dt = datetime.fromisoformat(remind_at)
+        dt_utc = dt.astimezone(timezone.utc)
+        pool = await get_pool()
+        await pool.enqueue_job("send_telegram_reminder", message=message, _defer_until=dt_utc)
+        local_str = dt.strftime("%-d %b at %-I:%M %p")
+        return f"Reminder set for {local_str} SAST: {message}"
 
     async def _get_weekly_overview(self, session: AsyncSession) -> str:
         lines = []
