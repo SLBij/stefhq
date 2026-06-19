@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import httpx
@@ -38,7 +38,9 @@ use for "what's on my plate", "catch me up", "what do I have this week", and sim
 - get_spider_info: fetch tarantula data including last fed and last moult dates — \
 pass a name/code to filter to one spider, or leave blank for the full crew
 - schedule_reminder: schedule a Telegram reminder at a specific date and time — use whenever Stef \
-mentions needing a nudge, follow-up, or time-based reminder
+mentions needing a nudge, follow-up, or time-based reminder (personal domain only — business reminders belong to Pip)
+- list_reminders: show Stef's pending personal reminders not yet fired
+- cancel_reminder: cancel a pending personal reminder by ID
 
 Use save_memory proactively when Stef shares facts, preferences, decisions, or anything she'd expect \
 you to recall later. Don't wait to be asked."""
@@ -118,7 +120,7 @@ _TOOLS = [
     },
     {
         "name": "schedule_reminder",
-        "description": "Schedule a Telegram reminder at a specific date and time. Use whenever Stef mentions needing a nudge, follow-up, or time-based reminder.",
+        "description": "Schedule a personal Telegram reminder at a specific date and time. Use whenever Stef mentions needing a nudge, follow-up, or time-based reminder.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -126,6 +128,22 @@ _TOOLS = [
                 "remind_at": {"type": "string", "description": "ISO 8601 datetime in SAST (UTC+2), e.g. '2026-06-23T15:00:00+02:00'"},
             },
             "required": ["message", "remind_at"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "List all pending personal Telegram reminders that haven't fired yet.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "cancel_reminder",
+        "description": "Cancel a pending personal reminder. Use the ID shown in list_reminders.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_id": {"type": "string", "description": "Full UUID of the reminder"},
+            },
+            "required": ["reminder_id"],
         },
     },
 ]
@@ -236,18 +254,50 @@ class HiveMindAgent(DeskAgent):
             return await get_spider_info(args.get("name_filter", ""))
 
         if name == "schedule_reminder":
-            return await self._schedule_reminder(args["message"], args["remind_at"])
+            return await self._schedule_reminder(session, args["message"], args["remind_at"])
+
+        if name == "list_reminders":
+            return await self._list_reminders(session)
+
+        if name == "cancel_reminder":
+            return await self._cancel_reminder(session, args["reminder_id"])
 
         return f"Unknown tool: {name}"
 
-    async def _schedule_reminder(self, message: str, remind_at: str) -> str:
+    async def _schedule_reminder(self, session: AsyncSession, message: str, remind_at: str) -> str:
+        from services.reminders import create_reminder, set_arq_job_id
         from workers.arq_pool import get_pool
         dt = datetime.fromisoformat(remind_at)
         dt_utc = dt.astimezone(timezone.utc)
+        reminder = await create_reminder(session, message, dt_utc, "personal")
         pool = await get_pool()
-        await pool.enqueue_job("send_telegram_reminder", message=message, _defer_until=dt_utc)
+        job = await pool.enqueue_job(
+            "send_telegram_reminder", message=message,
+            reminder_id=str(reminder.id), _defer_until=dt_utc,
+        )
+        if job:
+            await set_arq_job_id(session, reminder, job.job_id)
+        else:
+            await session.commit()
         local_str = dt.strftime("%-d %b at %-I:%M %p")
         return f"Reminder set for {local_str} SAST: {message}"
+
+    async def _list_reminders(self, session: AsyncSession) -> str:
+        from services.reminders import list_pending
+        reminders = await list_pending(session, "personal")
+        if not reminders:
+            return "No pending personal reminders."
+        SAST = timezone(timedelta(hours=2))
+        lines = []
+        for r in reminders:
+            local = r.remind_at.astimezone(SAST).strftime("%-d %b at %-I:%M %p")
+            lines.append(f"• [{str(r.id)[:8]}] {local} — {r.message}")
+        return "\n".join(lines)
+
+    async def _cancel_reminder(self, session: AsyncSession, reminder_id: str) -> str:
+        from services.reminders import cancel
+        ok = await cancel(session, reminder_id)
+        return "Reminder cancelled." if ok else "Reminder not found — it may have already fired."
 
     async def _get_weekly_overview(self, session: AsyncSession) -> str:
         lines = []

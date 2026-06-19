@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import httpx
@@ -51,6 +51,8 @@ Tools:
 - confirm_calendar_event: create a proposed event in Google Calendar — ONLY call after Stef explicitly confirms
 - list_upcoming_events: check Google Calendar for upcoming events (scheduling, availability)
 - schedule_reminder: schedule a Telegram reminder at a specific date/time — use for follow-ups, deadlines, anything time-based
+- list_reminders: show all pending business reminders not yet fired
+- cancel_reminder: cancel a pending reminder by ID (get ID from list_reminders)
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 email drafting, calendar management, and day-to-day business decisions. Be practical and direct — Stef \
@@ -305,10 +307,7 @@ _TOOLS = [
     },
     {
         "name": "schedule_reminder",
-        "description": (
-            "Schedule a Telegram reminder to be sent at a specific date and time. "
-            "Use for follow-ups (e.g. 'check in with Angelique on Monday'), payment chasers, deadlines, or any time-based nudge."
-        ),
+        "description": "Schedule a Telegram reminder at a specific date and time. Use for follow-ups, payment chasers, deadlines, or any time-based nudge.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -316,6 +315,22 @@ _TOOLS = [
                 "remind_at": {"type": "string", "description": "ISO 8601 datetime in SAST (UTC+2), e.g. '2026-06-23T15:00:00+02:00'"},
             },
             "required": ["message", "remind_at"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "List all pending business Telegram reminders that haven't fired yet.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "cancel_reminder",
+        "description": "Cancel a pending business reminder. Use the short ID shown in list_reminders.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_id": {"type": "string", "description": "Full UUID of the reminder (from list_reminders)"},
+            },
+            "required": ["reminder_id"],
         },
     },
 ]
@@ -643,14 +658,40 @@ class BusinessAgent(DeskAgent):
             return f"No events in the next {days_ahead} days."
         return json.dumps(events)
 
-    async def _schedule_reminder(self, message: str, remind_at: str) -> str:
+    async def _schedule_reminder(self, session: AsyncSession, message: str, remind_at: str) -> str:
+        from services.reminders import create_reminder, set_arq_job_id
         from workers.arq_pool import get_pool
         dt = datetime.fromisoformat(remind_at)
         dt_utc = dt.astimezone(timezone.utc)
+        reminder = await create_reminder(session, message, dt_utc, "business")
         pool = await get_pool()
-        await pool.enqueue_job("send_telegram_reminder", message=message, _defer_until=dt_utc)
+        job = await pool.enqueue_job(
+            "send_telegram_reminder", message=message,
+            reminder_id=str(reminder.id), _defer_until=dt_utc,
+        )
+        if job:
+            await set_arq_job_id(session, reminder, job.job_id)
+        else:
+            await session.commit()
         local_str = dt.strftime("%-d %b at %-I:%M %p")
         return f"Reminder set for {local_str} SAST: {message}"
+
+    async def _list_reminders(self, session: AsyncSession) -> str:
+        from services.reminders import list_pending
+        reminders = await list_pending(session, "business")
+        if not reminders:
+            return "No pending business reminders."
+        SAST = timezone(timedelta(hours=2))
+        lines = []
+        for r in reminders:
+            local = r.remind_at.astimezone(SAST).strftime("%-d %b at %-I:%M %p")
+            lines.append(f"• [{str(r.id)[:8]}] {local} — {r.message}")
+        return "\n".join(lines)
+
+    async def _cancel_reminder(self, session: AsyncSession, reminder_id: str) -> str:
+        from services.reminders import cancel
+        ok = await cancel(session, reminder_id)
+        return "Reminder cancelled." if ok else "Reminder not found — it may have already fired."
 
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -686,7 +727,7 @@ class BusinessAgent(DeskAgent):
     _WRITE_TOOLS = {
         "create_task", "update_job", "update_client_notes", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
-        "propose_calendar_event", "confirm_calendar_event", "schedule_reminder",
+        "propose_calendar_event", "confirm_calendar_event", "schedule_reminder", "cancel_reminder",
     }
 
     async def _execute_tool(
@@ -764,10 +805,14 @@ class BusinessAgent(DeskAgent):
                     user_id, session, tool_input.get("days_ahead", 7)
                 )
             elif name == "schedule_reminder":
-                result = await self._schedule_reminder(tool_input["message"], tool_input["remind_at"])
+                result = await self._schedule_reminder(session, tool_input["message"], tool_input["remind_at"])
                 await log_activity(session, "web", self.workspace.value, "tool_call",
                                    f"schedule_reminder: {tool_input.get('remind_at', '')} — {tool_input.get('message', '')[:60]}")
                 return result
+            elif name == "list_reminders":
+                return await self._list_reminders(session)
+            elif name == "cancel_reminder":
+                return await self._cancel_reminder(session, tool_input["reminder_id"])
             return "Unknown tool"
         except Exception as e:
             return f"Tool error: {e}"

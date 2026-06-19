@@ -166,6 +166,21 @@ class GoogleToken(Base):
     )
 
 
+class Reminder(Base):
+    __tablename__ = "reminders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # business | personal
+    workspace: Mapped[str] = mapped_column(String(20), nullable=False)
+    arq_job_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    fired: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class MemoryReviewItem(Base):
     __tablename__ = "memory_review_queue"
 

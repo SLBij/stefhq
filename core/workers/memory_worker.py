@@ -11,7 +11,7 @@ from config import settings
 from database import async_session_factory
 from services.memory import CONFIDENCE_THRESHOLD, queue_for_review, save_memory
 from services.memory_extractor import extract_from_exchange
-from workers.briefing_worker import send_morning_briefing, send_telegram_reminder
+from workers.briefing_worker import send_evening_briefing, send_morning_briefing, send_telegram_reminder
 
 
 async def extract_memories(
@@ -54,8 +54,9 @@ async def extract_memories(
 
 
 class WorkerSettings:
-    functions = [extract_memories, send_morning_briefing, send_telegram_reminder]
+    functions = [extract_memories, send_morning_briefing, send_telegram_reminder, send_evening_briefing]
     cron_jobs = [
-        cron(send_morning_briefing, hour=6, minute=15),  # 8:15am SAST (UTC+2)
+        cron(send_morning_briefing, hour=6, minute=15),   # 8:15am SAST (UTC+2)
+        cron(send_evening_briefing, hour=15, minute=0),   # 5:00pm SAST (UTC+2)
     ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
