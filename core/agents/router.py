@@ -40,8 +40,8 @@ Workspaces:
 - business: CRM, clients, invoices, jobs, curtains business (Certain Curtains)
 - plant_atlas: plants, FloraFolio, plant care, growing, plant photos
 - round_table: coding, project planning, technical work, software
-- hive_mind: personal chat, thinking out loud, general questions, journaling, system questions, memory, anything that doesn't fit another workspace
-- inbox: tasks, reminders, to-dos, action items, things to do or remember
+- hive_mind: personal chat, thinking out loud, general questions, journaling, system questions, memory, time-based Telegram reminders ("remind me at 3pm", "ping me tomorrow"), anything that doesn't fit another workspace
+- inbox: task management only — creating, listing, updating to-do items with no specific time trigger
 
 IMPORTANT: If [Current workspace] is provided, you MUST stay in that workspace unless the message CLEARLY belongs somewhere else. Greetings ("hi", "hello"), vague questions, and conversational openers always stay in the current workspace. Only reroute for unambiguous signals (e.g. "what's the invoice for Carmen?" while in hive_mind → business).
 
