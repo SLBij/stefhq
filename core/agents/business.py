@@ -1022,9 +1022,10 @@ class BusinessAgent(DeskAgent):
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
                 f"{self._base()}/purchase_orders", headers=self._headers(),
-                params={"id": f"eq.{po_id}", "select": "*"},
+                params={"id": f"eq.{po_id}", "select": "id,supplier_id,job_ids,status,ordered_at,paid_at,received_at,notes,created_at"},
             )
-            r.raise_for_status()
+            if not r.is_success:
+                return json.dumps({"error": f"purchase_orders query failed {r.status_code}", "body": r.text, "url": str(r.url)})
             rows = r.json()
             if not rows:
                 return f"Purchase order {po_id} not found."
@@ -1034,14 +1035,13 @@ class BusinessAgent(DeskAgent):
                 params={"po_id": f"eq.{po_id}", "select": "*"},
             )
             if not ri.is_success:
-                # Debug: fetch a sample row to expose actual field names
                 rsample = await client.get(
                     f"{self._base()}/purchase_order_items", headers=self._headers(),
                     params={"select": "*", "limit": "1"},
                 )
                 sample_keys = list(rsample.json()[0].keys()) if rsample.is_success and rsample.json() else []
                 po["items"] = []
-                po["items_debug"] = f"400 on purchase_order_items. Sample row fields: {sample_keys}"
+                po["items_debug"] = f"{ri.status_code} on purchase_order_items (po_id=eq.{po_id}): {ri.text}. Sample row fields: {sample_keys}"
             else:
                 po["items"] = ri.json()
             rs = await client.get(
