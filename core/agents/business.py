@@ -115,7 +115,9 @@ Stock levels are read-only; physical stock updates happen via the workshop scann
 job_windows holds curtain fabrics, linings, and rail details per room. job_blinds holds blind specs. \
 When drafting client emails, use compose_email with full job context — no separate tool needed. \
 When creating a PO and you need to know which supplier a fabric or product belongs to, call get_product \
-with the fabric name — it returns the supplier. Do not ask Stef which supplier to use; look it up first.
+with the fabric name — it returns the supplier. Do not ask Stef which supplier to use; look it up first. \
+When building PO items for a job, call get_job_materials first — it returns all fabric quantities, \
+rail codes, and blind specs already measured. Never ask Stef for quantities or codes you can look up.
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
@@ -363,6 +365,15 @@ _TOOLS = [
             "type": "object",
             "properties": {"po_id": {"type": "string", "description": "Purchase order UUID"}},
             "required": ["po_id"],
+        },
+    },
+    {
+        "name": "get_job_materials",
+        "description": "Get all material requirements for a specific job — fabrics, linings, rails (from job_windows) and blinds (from job_blinds) with quantities and codes already filled in. Use this when building PO items for a job.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"job_id": {"type": "string", "description": "Job UUID"}},
+            "required": ["job_id"],
         },
     },
     {
@@ -1040,6 +1051,24 @@ class BusinessAgent(DeskAgent):
                 po["jobs"] = rj.json()
         return json.dumps(po)
 
+    async def _get_job_materials(self, job_id: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            rw = await client.get(
+                f"{self._base()}/job_windows", headers=self._headers(),
+                params={"job_id": f"eq.{job_id}", "select": "*", "order": "room_label.asc"},
+            )
+            rw.raise_for_status()
+            rb = await client.get(
+                f"{self._base()}/job_blinds", headers=self._headers(),
+                params={"job_id": f"eq.{job_id}", "select": "*", "order": "room_label.asc"},
+            )
+            rb.raise_for_status()
+        windows = rw.json()
+        blinds = rb.json()
+        if not windows and not blinds:
+            return "No material specs found for this job. job_windows and job_blinds are empty — specs may not have been entered yet."
+        return json.dumps({"windows": windows, "blinds": blinds})
+
     async def _get_ordering_summary(self) -> str:
         async with httpx.AsyncClient(timeout=15) as client:
             rj = await client.get(
@@ -1452,6 +1481,8 @@ class BusinessAgent(DeskAgent):
                 return await self._list_purchase_orders(tool_input.get("status"))
             elif name == "get_purchase_order":
                 return await self._get_purchase_order(tool_input["po_id"])
+            elif name == "get_job_materials":
+                return await self._get_job_materials(tool_input["job_id"])
             elif name == "get_ordering_summary":
                 return await self._get_ordering_summary()
             elif name == "get_jobs_needing_orders":
@@ -1553,7 +1584,7 @@ class BusinessAgent(DeskAgent):
                             else "Setting reminder…" if block.name == "schedule_reminder" \
                             else "Checking suppliers…" if block.name in ("list_suppliers", "get_supplier") \
                             else "Checking orders…" if block.name in ("list_purchase_orders", "get_purchase_order", "get_jobs_awaiting_stock") \
-                            else "Analysing jobs…" if block.name in ("get_ordering_summary", "get_jobs_needing_orders", "get_overdue_jobs", "list_unpaid_jobs") \
+                            else "Analysing jobs…" if block.name in ("get_ordering_summary", "get_jobs_needing_orders", "get_overdue_jobs", "list_unpaid_jobs", "get_job_materials") \
                             else "Updating order…" if block.name in ("create_purchase_order", "add_po_items", "update_po_status", "log_po_issue") \
                             else "Checking stock…" if block.name in ("get_stock_levels", "get_product") \
                             else "Checking CRM…"
