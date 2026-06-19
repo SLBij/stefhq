@@ -980,7 +980,7 @@ class BusinessAgent(DeskAgent):
 
     async def _list_purchase_orders(self, status: str | None = None) -> str:
         params: dict = {
-            "select": "id,status,ordered_at,paid_at,received_at,job_ids,created_at,issues_delays,supplier_id",
+            "select": "id,status,ordered_at,paid_at,received_at,job_ids,created_at,notes,supplier_id",
             "order": "created_at.desc",
             "limit": "50",
         }
@@ -1170,7 +1170,7 @@ class BusinessAgent(DeskAgent):
         async with httpx.AsyncClient(timeout=10) as client:
             rp = await client.get(
                 f"{self._base()}/purchase_orders", headers=self._headers(),
-                params={"status": "eq.ordered", "select": "id,job_ids,ordered_at,issues_delays,supplier_id"},
+                params={"status": "eq.ordered", "select": "id,job_ids,ordered_at,notes,supplier_id"},
             )
             rp.raise_for_status()
             pos = rp.json()
@@ -1200,7 +1200,7 @@ class BusinessAgent(DeskAgent):
                 "po_id": po["id"],
                 "supplier_name": supplier_map.get(po["supplier_id"], "Unknown"),
                 "ordered_at": po.get("ordered_at"),
-                "issues_delays": po.get("issues_delays"),
+                "notes": po.get("notes"),
                 "jobs": [job_map[jid] for jid in (po.get("job_ids") or []) if jid in job_map],
             })
         return json.dumps(results)
@@ -1304,7 +1304,7 @@ class BusinessAgent(DeskAgent):
     ) -> str:
         payload: dict = {"supplier_id": supplier_id, "job_ids": job_ids, "status": "draft"}
         if notes:
-            payload["issues_delays"] = notes
+            payload["notes"] = notes
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
                 f"{self._base()}/purchase_orders",
@@ -1361,7 +1361,7 @@ class BusinessAgent(DeskAgent):
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
                 f"{self._base()}/purchase_orders", headers=self._headers(),
-                params={"id": f"eq.{po_id}", "select": "id,issues_delays"},
+                params={"id": f"eq.{po_id}", "select": "id,notes"},
             )
             r.raise_for_status()
             rows = r.json()
@@ -1369,13 +1369,13 @@ class BusinessAgent(DeskAgent):
                 return f"PO {po_id} not found."
             from datetime import date
             prefix = f"[{date.today().isoformat()}] {issue_text}"
-            current = rows[0].get("issues_delays") or ""
+            current = rows[0].get("notes") or ""
             new_text = f"{prefix}\n{current}".strip()
             rp = await client.patch(
                 f"{self._base()}/purchase_orders",
                 headers={**self._headers(), "Prefer": "return=minimal"},
                 params={"id": f"eq.{po_id}"},
-                json={"issues_delays": new_text},
+                json={"notes": new_text},
             )
             rp.raise_for_status()
         return "Issue logged on PO."
