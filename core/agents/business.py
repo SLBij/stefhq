@@ -54,6 +54,20 @@ Tools:
 - list_upcoming_events: check Google Calendar for upcoming events (scheduling, availability)
 - list_emails: check the inbox — list recent emails with From/Subject/Date/snippet. Useful for "any new emails?", "what's in the inbox?", checking for replies
 - read_email: read the full body of a specific email by ID (from list_emails)
+- list_suppliers / get_supplier: supplier contact details, account numbers, and order email templates
+- list_purchase_orders / get_purchase_order: view the PO pipeline — what's been drafted, ordered, paid, received; get full PO with line items
+- get_ordering_summary: full picture of what each active job needs (fabrics, linings, rails, blinds) and whether a PO already exists for it
+- get_jobs_needing_orders: quick filter — active jobs with no PO placed yet
+- get_jobs_awaiting_stock: jobs with POs ordered but stock not yet received
+- get_overdue_jobs: active jobs past their target or required date
+- list_unpaid_jobs: jobs with invoices outstanding
+- draft_supplier_order_email: create a Gmail draft to a supplier for a specific PO using their stored template — never sends, Stef reviews first
+- create_purchase_order: create a new draft PO linked to one or more jobs
+- add_po_items: add line items (code, description, qty, unit_price) to a draft PO
+- update_po_status: progress a PO from draft → ordered → paid → received
+- log_po_issue: record a delay or problem note on a PO
+- get_stock_levels: check current stock quantities, optionally filter to low stock or a category
+- get_product: look up a specific product by code or name
 - schedule_reminder: schedule a Telegram reminder at a specific date/time — use for follow-ups, deadlines, anything time-based
 - list_reminders: show all pending business reminders not yet fired
 - cancel_reminder: cancel a pending reminder by ID (get ID from list_reminders)
@@ -93,6 +107,13 @@ Stack direction:
 Fabric/colour:
 Quote ref (if known):
 Install date (if known):
+
+Purchase order pipeline: draft → ordered → paid → received. Use update_po_status to progress POs. \
+Always summarise what you're about to create/change before calling write tools. \
+You never send emails — draft_supplier_order_email and compose_email both save Gmail drafts only. \
+Stock levels are read-only; physical stock updates happen via the workshop scanner. \
+job_windows holds curtain fabrics, linings, and rail details per room. job_blinds holds blind specs. \
+When drafting client emails, use compose_email with full job context — no separate tool needed.
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
@@ -307,6 +328,157 @@ _TOOLS = [
             "properties": {
                 "days_ahead": {"type": "integer", "description": "How many days ahead to look (default 7, max 30)"},
             },
+        },
+    },
+    {
+        "name": "list_suppliers",
+        "description": "List all active suppliers with contact details and account numbers.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_supplier",
+        "description": "Get full supplier detail including the order email template and subject line.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"supplier_id": {"type": "string", "description": "Supplier UUID"}},
+            "required": ["supplier_id"],
+        },
+    },
+    {
+        "name": "list_purchase_orders",
+        "description": "List purchase orders, optionally filtered by status (draft/ordered/paid/received). Includes supplier name and linked job refs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["draft", "ordered", "paid", "received"], "description": "Filter by status. Omit for all."},
+            },
+        },
+    },
+    {
+        "name": "get_purchase_order",
+        "description": "Get full PO detail with all line items, supplier info, and linked jobs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"po_id": {"type": "string", "description": "Purchase order UUID"}},
+            "required": ["po_id"],
+        },
+    },
+    {
+        "name": "get_ordering_summary",
+        "description": "Full picture of every active job — what fabrics, linings, rails, and blinds are needed per job, plus whether a PO already exists. Use to decide what needs ordering.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_jobs_needing_orders",
+        "description": "Active jobs with no purchase order placed yet — i.e. materials haven't been ordered.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_jobs_awaiting_stock",
+        "description": "Jobs with POs in 'ordered' status — materials on the way but not yet received.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_overdue_jobs",
+        "description": "Active jobs that are past their target_date or required_date.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "list_unpaid_jobs",
+        "description": "Jobs with an invoice number but final payment not yet received.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "draft_supplier_order_email",
+        "description": "Draft a purchase order email to a supplier using their stored template, populated with PO line items. Saves to Gmail drafts — never sends.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"po_id": {"type": "string", "description": "Purchase order UUID to email"}},
+            "required": ["po_id"],
+        },
+    },
+    {
+        "name": "create_purchase_order",
+        "description": "Create a new draft PO linked to one or more jobs. Always confirm supplier and job list with Stef before calling.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "supplier_id": {"type": "string", "description": "Supplier UUID"},
+                "job_ids": {"type": "array", "items": {"type": "string"}, "description": "List of job UUIDs"},
+                "notes": {"type": "string", "description": "Optional internal note"},
+            },
+            "required": ["supplier_id", "job_ids"],
+        },
+    },
+    {
+        "name": "add_po_items",
+        "description": "Add line items to a draft PO.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "po_id": {"type": "string", "description": "Purchase order UUID"},
+                "items": {
+                    "type": "array",
+                    "description": "List of items to add",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string"},
+                            "description": {"type": "string"},
+                            "qty": {"type": "string", "description": "e.g. '8.5m' or '2'"},
+                            "unit_price": {"type": "number"},
+                            "job_id": {"type": "string", "description": "Optional — which job this item is for"},
+                        },
+                        "required": ["description", "qty"],
+                    },
+                },
+            },
+            "required": ["po_id", "items"],
+        },
+    },
+    {
+        "name": "update_po_status",
+        "description": "Progress a PO through the pipeline: ordered → paid → received.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "po_id": {"type": "string", "description": "Purchase order UUID"},
+                "status": {"type": "string", "enum": ["ordered", "paid", "received"]},
+                "date": {"type": "string", "description": "ISO date (YYYY-MM-DD). Defaults to today."},
+            },
+            "required": ["po_id", "status"],
+        },
+    },
+    {
+        "name": "log_po_issue",
+        "description": "Record a delay, problem, or note against a PO. Prepended with today's date.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "po_id": {"type": "string", "description": "Purchase order UUID"},
+                "issue_text": {"type": "string", "description": "Description of the delay or issue"},
+            },
+            "required": ["po_id", "issue_text"],
+        },
+    },
+    {
+        "name": "get_stock_levels",
+        "description": "Check current stock quantities for all active products. Filter to low stock or a specific category.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "low_only": {"type": "boolean", "description": "If true, only return items with stock_qty ≤ 2"},
+                "category": {"type": "string", "description": "Optional: filter by product category"},
+            },
+        },
+    },
+    {
+        "name": "get_product",
+        "description": "Look up a specific product by code or partial name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Product code or partial name"}},
+            "required": ["query"],
         },
     },
     {
@@ -773,10 +945,427 @@ class BusinessAgent(DeskAgent):
 
         return f"Communication logged: [{comm_type}] {note}"
 
+    async def _list_suppliers(self) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/suppliers", headers=self._headers(),
+                params={"or": "(active.is.true,active.is.null)", "select": "id,name,supplier_type,account_number,email,order_format,pricelist_added", "order": "name.asc"},
+            )
+            r.raise_for_status()
+            results = r.json()
+        return json.dumps(results) if results else "No suppliers found."
+
+    async def _get_supplier(self, supplier_id: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/suppliers", headers=self._headers(),
+                params={"id": f"eq.{supplier_id}", "select": "*"},
+            )
+            r.raise_for_status()
+            rows = r.json()
+        return json.dumps(rows[0]) if rows else f"Supplier {supplier_id} not found."
+
+    async def _list_purchase_orders(self, status: str | None = None) -> str:
+        params: dict = {
+            "select": "id,status,ordered_at,paid_at,received_at,job_ids,created_at,issues_delays,supplier_id",
+            "order": "created_at.desc",
+            "limit": "50",
+        }
+        if status:
+            params["status"] = f"eq.{status}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{self._base()}/purchase_orders", headers=self._headers(), params=params)
+            r.raise_for_status()
+            pos = r.json()
+            if not pos:
+                return "No purchase orders found."
+            supplier_ids = list({p["supplier_id"] for p in pos if p.get("supplier_id")})
+            supplier_map: dict = {}
+            if supplier_ids:
+                sr = await client.get(
+                    f"{self._base()}/suppliers", headers=self._headers(),
+                    params={"id": f"in.({','.join(supplier_ids)})", "select": "id,name"},
+                )
+                sr.raise_for_status()
+                supplier_map = {s["id"]: s["name"] for s in sr.json()}
+            all_job_ids = list({jid for p in pos for jid in (p.get("job_ids") or [])})
+            job_map: dict = {}
+            if all_job_ids:
+                jr = await client.get(
+                    f"{self._base()}/jobs", headers=self._headers(),
+                    params={"id": f"in.({','.join(all_job_ids)})", "select": "id,quote_ref,client_name"},
+                )
+                jr.raise_for_status()
+                job_map = {j["id"]: j for j in jr.json()}
+        for p in pos:
+            p["supplier_name"] = supplier_map.get(p["supplier_id"], "Unknown")
+            p["job_refs"] = [
+                {"quote_ref": job_map[jid].get("quote_ref"), "client_name": job_map[jid]["client_name"]}
+                for jid in (p.get("job_ids") or []) if jid in job_map
+            ]
+        return json.dumps(pos)
+
+    async def _get_purchase_order(self, po_id: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/purchase_orders", headers=self._headers(),
+                params={"id": f"eq.{po_id}", "select": "*"},
+            )
+            r.raise_for_status()
+            rows = r.json()
+            if not rows:
+                return f"Purchase order {po_id} not found."
+            po = rows[0]
+            ri = await client.get(
+                f"{self._base()}/purchase_order_items", headers=self._headers(),
+                params={"po_id": f"eq.{po_id}", "select": "*", "order": "sort_order.asc"},
+            )
+            ri.raise_for_status()
+            po["items"] = ri.json()
+            rs = await client.get(
+                f"{self._base()}/suppliers", headers=self._headers(),
+                params={"id": f"eq.{po['supplier_id']}", "select": "id,name,email,account_number,subject_line,template,order_format"},
+            )
+            rs.raise_for_status()
+            supplier_rows = rs.json()
+            po["supplier"] = supplier_rows[0] if supplier_rows else {}
+            if po.get("job_ids"):
+                rj = await client.get(
+                    f"{self._base()}/jobs", headers=self._headers(),
+                    params={"id": f"in.({','.join(po['job_ids'])})", "select": "id,quote_ref,client_name,production_status"},
+                )
+                rj.raise_for_status()
+                po["jobs"] = rj.json()
+        return json.dumps(po)
+
+    async def _get_ordering_summary(self) -> str:
+        async with httpx.AsyncClient(timeout=15) as client:
+            rj = await client.get(
+                f"{self._base()}/jobs", headers=self._headers(),
+                params={"status": "eq.active", "select": "id,client_name,quote_ref,production_status,target_date,install_date,required_date", "order": "install_date.asc.nullslast", "limit": "30"},
+            )
+            rj.raise_for_status()
+            jobs = rj.json()
+            if not jobs:
+                return "No active jobs."
+            ids_str = f"({','.join(j['id'] for j in jobs)})"
+            rw = await client.get(
+                f"{self._base()}/job_windows", headers=self._headers(),
+                params={"job_id": f"in.{ids_str}", "select": "job_id,room_label,fabric_name,fabric_metres,lining_type,lining_fabric,lining_metres,rail_code,rail_type"},
+            )
+            rw.raise_for_status()
+            rb = await client.get(
+                f"{self._base()}/job_blinds", headers=self._headers(),
+                params={"job_id": f"in.{ids_str}", "select": "job_id,room_label,blind_type,colour,width_mm,drop_mm"},
+            )
+            rb.raise_for_status()
+            rp = await client.get(
+                f"{self._base()}/purchase_orders", headers=self._headers(),
+                params={"status": "neq.received", "select": "id,job_ids,status,ordered_at,supplier_id"},
+            )
+            rp.raise_for_status()
+            pos = rp.json()
+        windows_by_job: dict = {}
+        for w in rw.json():
+            windows_by_job.setdefault(w["job_id"], []).append(w)
+        blinds_by_job: dict = {}
+        for b in rb.json():
+            blinds_by_job.setdefault(b["job_id"], []).append(b)
+        job_po_map: dict = {}
+        for po in pos:
+            for jid in (po.get("job_ids") or []):
+                job_po_map.setdefault(jid, []).append({"po_id": po["id"], "status": po["status"], "ordered_at": po.get("ordered_at"), "supplier_id": po.get("supplier_id")})
+        return json.dumps([
+            {
+                "job_id": j["id"],
+                "client_name": j["client_name"],
+                "quote_ref": j.get("quote_ref"),
+                "production_status": j.get("production_status"),
+                "target_date": j.get("target_date"),
+                "install_date": j.get("install_date"),
+                "windows": windows_by_job.get(j["id"], []),
+                "blinds": blinds_by_job.get(j["id"], []),
+                "purchase_orders": job_po_map.get(j["id"], []),
+            }
+            for j in jobs
+        ])
+
+    async def _get_jobs_needing_orders(self) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            rj = await client.get(
+                f"{self._base()}/jobs", headers=self._headers(),
+                params={"status": "eq.active", "select": "id,client_name,quote_ref,production_status,target_date,install_date", "order": "install_date.asc.nullslast", "limit": "50"},
+            )
+            rj.raise_for_status()
+            jobs = rj.json()
+            if not jobs:
+                return "No active jobs."
+            rp = await client.get(
+                f"{self._base()}/purchase_orders", headers=self._headers(),
+                params={"status": "neq.received", "select": "job_ids,status"},
+            )
+            rp.raise_for_status()
+            pos = rp.json()
+        ordered_ids = {jid for po in pos for jid in (po.get("job_ids") or [])}
+        needs_order = [j for j in jobs if j["id"] not in ordered_ids]
+        return json.dumps(needs_order) if needs_order else "All active jobs have purchase orders placed."
+
+    async def _get_jobs_awaiting_stock(self) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            rp = await client.get(
+                f"{self._base()}/purchase_orders", headers=self._headers(),
+                params={"status": "eq.ordered", "select": "id,job_ids,ordered_at,issues_delays,supplier_id"},
+            )
+            rp.raise_for_status()
+            pos = rp.json()
+            if not pos:
+                return "No jobs awaiting stock."
+            supplier_ids = list({p["supplier_id"] for p in pos if p.get("supplier_id")})
+            supplier_map: dict = {}
+            if supplier_ids:
+                rs = await client.get(
+                    f"{self._base()}/suppliers", headers=self._headers(),
+                    params={"id": f"in.({','.join(supplier_ids)})", "select": "id,name"},
+                )
+                rs.raise_for_status()
+                supplier_map = {s["id"]: s["name"] for s in rs.json()}
+            all_job_ids = list({jid for p in pos for jid in (p.get("job_ids") or [])})
+            job_map: dict = {}
+            if all_job_ids:
+                rj = await client.get(
+                    f"{self._base()}/jobs", headers=self._headers(),
+                    params={"id": f"in.({','.join(all_job_ids)})", "select": "id,quote_ref,client_name,production_status,install_date"},
+                )
+                rj.raise_for_status()
+                job_map = {j["id"]: j for j in rj.json()}
+        results = []
+        for po in pos:
+            results.append({
+                "po_id": po["id"],
+                "supplier_name": supplier_map.get(po["supplier_id"], "Unknown"),
+                "ordered_at": po.get("ordered_at"),
+                "issues_delays": po.get("issues_delays"),
+                "jobs": [job_map[jid] for jid in (po.get("job_ids") or []) if jid in job_map],
+            })
+        return json.dumps(results)
+
+    async def _get_overdue_jobs(self) -> str:
+        from datetime import date
+        today = date.today().isoformat()
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/jobs", headers=self._headers(),
+                params={
+                    "status": "eq.active",
+                    "select": "id,client_name,quote_ref,target_date,required_date,install_date,production_status",
+                    "or": f"(target_date.lt.{today},required_date.lt.{today})",
+                    "order": "target_date.asc.nullslast",
+                    "limit": "50",
+                },
+            )
+            r.raise_for_status()
+            jobs = r.json()
+        if not jobs:
+            return "No overdue jobs."
+        from datetime import date as date_type
+        today_dt = date_type.today()
+        for j in jobs:
+            overdue_days = None
+            for field in ("target_date", "required_date"):
+                if j.get(field):
+                    try:
+                        d = date_type.fromisoformat(j[field])
+                        diff = (today_dt - d).days
+                        if diff > 0 and (overdue_days is None or diff < overdue_days):
+                            overdue_days = diff
+                    except ValueError:
+                        pass
+            j["days_overdue"] = overdue_days
+        return json.dumps(jobs)
+
+    async def _list_unpaid_jobs(self) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/jobs", headers=self._headers(),
+                params={
+                    "status": "neq.archived",
+                    "invoice_number": "not.is.null",
+                    "or": "(final_payment_received.is.false,final_payment_received.is.null)",
+                    "select": "id,client_name,quote_ref,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,final_payment_received,status",
+                    "order": "invoice_sent_at.asc.nullslast",
+                    "limit": "50",
+                },
+            )
+            r.raise_for_status()
+            jobs = r.json()
+        if not jobs:
+            return "No unpaid invoices."
+        for j in jobs:
+            j["payment_status"] = self._payment_status(j)
+        return json.dumps(jobs)
+
+    async def _draft_supplier_order_email(
+        self, user_id: uuid.UUID, session: AsyncSession, po_id: str
+    ) -> str:
+        po_json = await self._get_purchase_order(po_id)
+        if "not found" in po_json:
+            return po_json
+        po = json.loads(po_json)
+        supplier = po.get("supplier", {})
+        items = po.get("items", [])
+        jobs = po.get("jobs", [])
+        to_email = supplier.get("email", "")
+        if not to_email:
+            return f"Cannot draft: supplier '{supplier.get('name', po_id)}' has no email on record."
+        job_refs_str = ", ".join(j.get("quote_ref") or j.get("client_name", "") for j in jobs)
+        from datetime import date
+        today = date.today().strftime("%d %B %Y")
+        item_lines = ["Code | Description | Qty | Unit Price", "-" * 52]
+        for item in items:
+            price = f"R{float(item.get('unit_price', 0)):.2f}" if item.get("unit_price") is not None else "—"
+            item_lines.append(f"{item.get('code', '—')} | {item.get('description', '—')} | {item.get('qty', '—')} | {price}")
+        item_table = "\n".join(item_lines)
+        template = supplier.get("template") or ""
+        if template:
+            body = template.replace("{items}", item_table).replace("{job_ref}", job_refs_str) \
+                           .replace("{account_number}", supplier.get("account_number") or "") \
+                           .replace("{date}", today)
+            if item_table not in body:
+                body = f"{body}\n\n{item_table}"
+        else:
+            body = (
+                f"Dear {supplier.get('name', 'Sir/Madam')},\n\n"
+                f"Please find our order details below.\n\n"
+                f"Job Reference(s): {job_refs_str}\nDate: {today}\nAccount: {supplier.get('account_number', '')}\n\n"
+                f"{item_table}\n\nKind regards,\nStef\nCertain Curtains"
+            )
+        subject = supplier.get("subject_line") or f"Order — {job_refs_str} — {today}"
+        result = await self._compose_email(user_id, session, to_email=to_email, subject=subject, body=body, to_name=supplier.get("name"))
+        return f"Supplier order email drafted.\n\n{result}"
+
+    async def _create_purchase_order(
+        self, supplier_id: str, job_ids: list, notes: str | None = None
+    ) -> str:
+        payload: dict = {"supplier_id": supplier_id, "job_ids": job_ids, "status": "draft"}
+        if notes:
+            payload["issues_delays"] = notes
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{self._base()}/purchase_orders",
+                headers={**self._headers(), "Prefer": "return=representation"},
+                json=payload,
+            )
+            r.raise_for_status()
+            created = r.json()
+        record = created[0] if isinstance(created, list) else created
+        return json.dumps({"id": record["id"], "status": "draft", "supplier_id": supplier_id, "job_ids": job_ids})
+
+    async def _add_po_items(self, po_id: str, items: list) -> str:
+        payload = [
+            {
+                "po_id": po_id,
+                "code": item.get("code"),
+                "description": item.get("description"),
+                "qty": item.get("qty"),
+                "unit_price": item.get("unit_price"),
+                "job_id": item.get("job_id"),
+                "sort_order": i,
+            }
+            for i, item in enumerate(items)
+        ]
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{self._base()}/purchase_order_items",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                json=payload,
+            )
+            r.raise_for_status()
+        return f"{len(items)} item(s) added to PO."
+
+    async def _update_po_status(
+        self, po_id: str, status: str, date: str | None = None
+    ) -> str:
+        from datetime import date as date_type
+        today = date or date_type.today().isoformat()
+        date_fields = {"ordered": "ordered_at", "paid": "paid_at", "received": "received_at"}
+        payload: dict = {"status": status}
+        if status in date_fields:
+            payload[date_fields[status]] = today
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.patch(
+                f"{self._base()}/purchase_orders",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                params={"id": f"eq.{po_id}"},
+                json=payload,
+            )
+            r.raise_for_status()
+        return f"PO updated to '{status}' on {today}."
+
+    async def _log_po_issue(self, po_id: str, issue_text: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/purchase_orders", headers=self._headers(),
+                params={"id": f"eq.{po_id}", "select": "id,issues_delays"},
+            )
+            r.raise_for_status()
+            rows = r.json()
+            if not rows:
+                return f"PO {po_id} not found."
+            from datetime import date
+            prefix = f"[{date.today().isoformat()}] {issue_text}"
+            current = rows[0].get("issues_delays") or ""
+            new_text = f"{prefix}\n{current}".strip()
+            rp = await client.patch(
+                f"{self._base()}/purchase_orders",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                params={"id": f"eq.{po_id}"},
+                json={"issues_delays": new_text},
+            )
+            rp.raise_for_status()
+        return "Issue logged on PO."
+
+    async def _get_stock_levels(
+        self, low_only: bool = False, category: str | None = None
+    ) -> str:
+        params: dict = {
+            "active": "eq.true",
+            "select": "id,code,name,category,stock_qty,supplier_id",
+            "order": "category.asc,name.asc",
+            "limit": "100",
+        }
+        if low_only:
+            params["stock_qty"] = "lte.2"
+        if category:
+            params["category"] = f"eq.{category}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{self._base()}/products", headers=self._headers(), params=params)
+            r.raise_for_status()
+            results = r.json()
+        return json.dumps(results) if results else "No products found."
+
+    async def _get_product(self, query: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/products", headers=self._headers(),
+                params={"code": f"ilike.{query}", "active": "eq.true", "select": "*,suppliers(name)", "limit": "10"},
+            )
+            r.raise_for_status()
+            results = r.json()
+            if not results:
+                r2 = await client.get(
+                    f"{self._base()}/products", headers=self._headers(),
+                    params={"name": f"ilike.*{query}*", "active": "eq.true", "select": "*,suppliers(name)", "limit": "10"},
+                )
+                r2.raise_for_status()
+                results = r2.json()
+        return json.dumps(results) if results else f"No products found matching '{query}'."
+
     _WRITE_TOOLS = {
         "create_task", "update_job", "update_client_notes", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
         "propose_calendar_event", "confirm_calendar_event", "schedule_reminder", "cancel_reminder",
+        "draft_supplier_order_email", "create_purchase_order", "add_po_items",
+        "update_po_status", "log_po_issue",
     }
 
     async def _execute_tool(
@@ -853,6 +1442,49 @@ class BusinessAgent(DeskAgent):
                 return await self._list_upcoming_events(
                     user_id, session, tool_input.get("days_ahead", 7)
                 )
+            elif name == "list_suppliers":
+                return await self._list_suppliers()
+            elif name == "get_supplier":
+                return await self._get_supplier(tool_input["supplier_id"])
+            elif name == "list_purchase_orders":
+                return await self._list_purchase_orders(tool_input.get("status"))
+            elif name == "get_purchase_order":
+                return await self._get_purchase_order(tool_input["po_id"])
+            elif name == "get_ordering_summary":
+                return await self._get_ordering_summary()
+            elif name == "get_jobs_needing_orders":
+                return await self._get_jobs_needing_orders()
+            elif name == "get_jobs_awaiting_stock":
+                return await self._get_jobs_awaiting_stock()
+            elif name == "get_overdue_jobs":
+                return await self._get_overdue_jobs()
+            elif name == "list_unpaid_jobs":
+                return await self._list_unpaid_jobs()
+            elif name == "draft_supplier_order_email":
+                if not user_id:
+                    return "Cannot draft email: user context missing."
+                return await self._draft_supplier_order_email(user_id, session, tool_input["po_id"])
+            elif name == "create_purchase_order":
+                result = await self._create_purchase_order(
+                    tool_input["supplier_id"], tool_input["job_ids"], tool_input.get("notes")
+                )
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"create_purchase_order: supplier {tool_input['supplier_id'][:8]}…")
+                return result
+            elif name == "add_po_items":
+                return await self._add_po_items(tool_input["po_id"], tool_input["items"])
+            elif name == "update_po_status":
+                return await self._update_po_status(
+                    tool_input["po_id"], tool_input["status"], tool_input.get("date")
+                )
+            elif name == "log_po_issue":
+                return await self._log_po_issue(tool_input["po_id"], tool_input["issue_text"])
+            elif name == "get_stock_levels":
+                return await self._get_stock_levels(
+                    tool_input.get("low_only", False), tool_input.get("category")
+                )
+            elif name == "get_product":
+                return await self._get_product(tool_input["query"])
             elif name == "list_emails":
                 if not user_id:
                     return "Cannot access email: user context missing."
@@ -913,10 +1545,15 @@ class BusinessAgent(DeskAgent):
                 tool_results = []
                 for block in final.content:
                     if block.type == "tool_use":
-                        _status = "Sending email…" if block.name in ("send_email", "compose_email") \
+                        _status = "Sending email…" if block.name in ("send_email", "compose_email", "draft_supplier_order_email") \
                             else "Checking inbox…" if block.name in ("list_emails", "read_email") \
                             else "Updating calendar…" if block.name in ("confirm_calendar_event", "propose_calendar_event", "list_upcoming_events") \
                             else "Setting reminder…" if block.name == "schedule_reminder" \
+                            else "Checking suppliers…" if block.name in ("list_suppliers", "get_supplier") \
+                            else "Checking orders…" if block.name in ("list_purchase_orders", "get_purchase_order", "get_jobs_awaiting_stock") \
+                            else "Analysing jobs…" if block.name in ("get_ordering_summary", "get_jobs_needing_orders", "get_overdue_jobs", "list_unpaid_jobs") \
+                            else "Updating order…" if block.name in ("create_purchase_order", "add_po_items", "update_po_status", "log_po_issue") \
+                            else "Checking stock…" if block.name in ("get_stock_levels", "get_product") \
                             else "Checking CRM…"
                         yield status_event(_status)
                         result = await self._execute_tool(block.name, dict(block.input), session, user_id)
