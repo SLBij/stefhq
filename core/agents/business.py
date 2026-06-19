@@ -1034,16 +1034,7 @@ class BusinessAgent(DeskAgent):
                 f"{self._base()}/purchase_order_items", headers=self._headers(),
                 params={"po_id": f"eq.{po_id}", "select": "*"},
             )
-            if not ri.is_success:
-                rsample = await client.get(
-                    f"{self._base()}/purchase_order_items", headers=self._headers(),
-                    params={"select": "*", "limit": "1"},
-                )
-                sample_keys = list(rsample.json()[0].keys()) if rsample.is_success and rsample.json() else []
-                po["items"] = []
-                po["items_debug"] = f"{ri.status_code} on purchase_order_items (po_id=eq.{po_id}): {ri.text}. Sample row fields: {sample_keys}"
-            else:
-                po["items"] = ri.json()
+            po["items"] = ri.json() if ri.is_success else []
             rs = await client.get(
                 f"{self._base()}/suppliers", headers=self._headers(),
                 params={"id": f"eq.{po['supplier_id']}", "select": "id,name,email,account_number,subject_line,template,order_format"},
