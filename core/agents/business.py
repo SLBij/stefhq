@@ -62,6 +62,7 @@ Tools:
 - get_overdue_jobs: active jobs past their target or required date
 - list_unpaid_jobs: jobs with invoices outstanding
 - draft_supplier_order_email: create a Gmail draft to a supplier for a specific PO using their stored template — never sends, Stef reviews first
+- draft_client_update_email: create a Gmail draft to a client — quote_follow_up, payment_request, production_update, delay_notice, install_confirmation, or final_payment_request. Includes a shareable quote link if the job has a share_token (generated in CRM via Share Quote button). Never sends — Stef reviews first
 - create_purchase_order: create a new draft PO linked to one or more jobs
 - add_po_items: add line items (code, description, qty, unit_price) to a draft PO
 - update_po_status: progress a PO from draft → ordered → paid → received
@@ -523,6 +524,27 @@ _TOOLS = [
                 "email_id": {"type": "string", "description": "Gmail message ID from list_emails"},
             },
             "required": ["email_id"],
+        },
+    },
+    {
+        "name": "draft_client_update_email",
+        "description": (
+            "Draft a client-facing email and save it as a Gmail draft for Stef to review. "
+            "Never sends — Stef sends manually. Use for quote follow-ups, payment requests, "
+            "production updates, delay notices, install confirmations, and final payment requests."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "UUID of the job"},
+                "message_type": {
+                    "type": "string",
+                    "enum": ["quote_follow_up", "payment_request", "production_update", "delay_notice", "install_confirmation", "final_payment_request"],
+                    "description": "Type of email to draft",
+                },
+                "extra_context": {"type": "string", "description": "Optional extra detail to weave in, e.g. 'Hertex fabric backordered 2 weeks'"},
+            },
+            "required": ["job_id", "message_type"],
         },
     },
     {
@@ -1334,6 +1356,100 @@ class BusinessAgent(DeskAgent):
         result = await self._compose_email(user_id, session, to_email=to_email, subject=subject, body=body, to_name=supplier.get("name"))
         return f"Supplier order email drafted.\n\n{result}"
 
+    _CRM_BASE = "https://certaincurtainscrm.netlify.app/"
+
+    async def _draft_client_update_email(
+        self, user_id: uuid.UUID, session: AsyncSession, job_id: str, message_type: str, extra_context: str | None = None
+    ) -> str:
+        from datetime import date
+        async with httpx.AsyncClient(timeout=10) as client:
+            rj = await client.get(
+                f"{self._base()}/jobs", headers=self._headers(),
+                params={"id": f"eq.{job_id}", "select": "id,client_id,client_name,quote_ref,status,production_status,install_date,required_date,invoice_total,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,final_payment_received,quote_accepted_by,notes,share_token,quote_expires_at", "limit": "1"},
+            )
+            rj.raise_for_status()
+            rows = rj.json()
+            if not rows:
+                return f"Job {job_id} not found."
+            job = rows[0]
+            # Fetch client email
+            client_email = ""
+            client_id = job.get("client_id")
+            if client_id:
+                rc = await client.get(
+                    f"{self._base()}/clients", headers=self._headers(),
+                    params={"id": f"eq.{client_id}", "select": "id,name,email,phone", "limit": "1"},
+                )
+                rc.raise_for_status()
+                client_rows = rc.json()
+                if client_rows:
+                    client_email = client_rows[0].get("email") or ""
+
+        if not client_email:
+            return f"Cannot draft: no email address on file for {job.get('client_name', job_id)}. Add one in the CRM first."
+
+        name = job.get("client_name", "")
+        first_name = name.split()[0] if name else "there"
+        quote_ref = job.get("quote_ref", "")
+        install_date = job.get("install_date")
+        invoice_total = job.get("invoice_total")
+        part_amount = job.get("part_payment_amount")
+        payment_status = self._payment_status(job)
+        today_str = date.today().strftime("%-d %B %Y")
+
+        # Build quote URL if share token exists
+        share_token = job.get("share_token")
+        quote_url = f"{self._CRM_BASE}quote-view.html?token={share_token}" if share_token else None
+        quote_link_line = f"\nYour quote is here if you need it: {quote_url}\n" if quote_url else "\n(Note: no quote link generated yet — share the quote in the CRM to include a link.)\n"
+
+        # Format amounts
+        def fmt_amount(amount) -> str:
+            try:
+                return f"R{float(amount):,.0f}"
+            except (TypeError, ValueError):
+                return str(amount) if amount else "the outstanding amount"
+
+        total_str = fmt_amount(invoice_total)
+        part_str = fmt_amount(part_amount) if part_amount else fmt_amount(invoice_total and float(invoice_total) * 0.8 if invoice_total else None)
+        install_str = install_date or "to be confirmed"
+
+        extra = f"\n\n{extra_context}" if extra_context else ""
+        production_status = job.get("production_status", "in progress")
+
+        templates = {
+            "quote_follow_up": (
+                f"Following up on your quote — {quote_ref}",
+                f"Hi {first_name},\n\nI hope you're well! I just wanted to follow up on the quote we sent for your curtains and blinds.\n\nIf you have any questions or would like to make any changes, please don't hesitate to get in touch — we're happy to chat through the details.{quote_link_line}{extra}\n\nLooking forward to hearing from you!\n\nWarm regards,\nStef\nCertain Curtains"
+            ),
+            "payment_request": (
+                f"Deposit required to proceed — {quote_ref}",
+                f"Hi {first_name},\n\nThank you for accepting your quote — we're excited to get started on your curtains!\n\nTo get your order into production, we ask for an 80% deposit of {part_str}. Please transfer to:\n\n[Bank details]\n\nKindly use your name as reference and send proof of payment via WhatsApp or email once done.{quote_link_line}{extra}\n\nLooking forward to getting your order underway!\n\nWarm regards,\nStef\nCertain Curtains"
+            ),
+            "production_update": (
+                f"Update on your curtains — {quote_ref}",
+                f"Hi {first_name},\n\nJust a quick update on your order — your curtains are currently {production_status.replace('_', ' ')}. Everything is on track and we'll be in touch as soon as we have a confirmed installation date.{extra}\n\nDon't hesitate to reach out if you have any questions in the meantime!\n\nWarm regards,\nStef\nCertain Curtains"
+            ),
+            "delay_notice": (
+                f"Update regarding your order — {quote_ref}",
+                f"Hi {first_name},\n\nI wanted to reach out regarding your curtain order. Unfortunately we've experienced a slight delay{' — ' + extra_context if extra_context else ''}.\n\nWe sincerely apologise for the inconvenience and are doing everything we can to get your order completed as soon as possible. We'll keep you updated every step of the way.\n\nThank you so much for your patience and understanding.\n\nWarm regards,\nStef\nCertain Curtains"
+            ),
+            "install_confirmation": (
+                f"Installation confirmed — {quote_ref}",
+                f"Hi {first_name},\n\nGreat news — your curtains are ready! We've confirmed your installation for {install_str}.{extra}\n\nPlease ensure someone is home to grant access. If anything comes up before then, please let us know as soon as possible so we can reschedule.\n\nWe can't wait for you to see the finished result!\n\nWarm regards,\nStef\nCertain Curtains"
+            ),
+            "final_payment_request": (
+                f"Final balance due — {quote_ref}",
+                f"Hi {first_name},\n\nThank you so much — your installation is complete and we hope you're loving your new curtains!\n\nThe final balance of {total_str} is now due. Please transfer to:\n\n[Bank details]\n\nKindly use your name as reference and send proof of payment via WhatsApp or email.{extra}\n\nIt was an absolute pleasure working with you — thank you for choosing Certain Curtains!\n\nWarm regards,\nStef\nCertain Curtains"
+            ),
+        }
+
+        if message_type not in templates:
+            return f"Unknown message_type '{message_type}'."
+
+        subject, body = templates[message_type]
+        result = await self._compose_email(user_id, session, to_email=client_email, subject=subject, body=body, to_name=name)
+        return f"Client email drafted ({message_type}) to {client_email}.\n\n{result}"
+
     async def _create_purchase_order(
         self, supplier_id: str, job_ids: list, notes: str | None = None
     ) -> str:
@@ -1488,7 +1604,7 @@ class BusinessAgent(DeskAgent):
         "create_task", "update_job", "update_client_notes", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
         "propose_calendar_event", "confirm_calendar_event", "schedule_reminder", "cancel_reminder",
-        "draft_supplier_order_email", "create_purchase_order", "add_po_items",
+        "draft_supplier_order_email", "draft_client_update_email", "create_purchase_order", "add_po_items",
         "update_po_status", "log_po_issue", "append_note", "write_notes",
     }
 
@@ -1590,6 +1706,12 @@ class BusinessAgent(DeskAgent):
                 if not user_id:
                     return "Cannot draft email: user context missing."
                 return await self._draft_supplier_order_email(user_id, session, tool_input["po_id"])
+            elif name == "draft_client_update_email":
+                if not user_id:
+                    return "Cannot draft email: user context missing."
+                return await self._draft_client_update_email(
+                    user_id, session, tool_input["job_id"], tool_input["message_type"], tool_input.get("extra_context")
+                )
             elif name == "create_purchase_order":
                 result = await self._create_purchase_order(
                     tool_input["supplier_id"], tool_input["job_ids"], tool_input.get("notes")
@@ -1677,7 +1799,7 @@ class BusinessAgent(DeskAgent):
                 tool_results = []
                 for block in final.content:
                     if block.type == "tool_use":
-                        _status = "Sending email…" if block.name in ("send_email", "compose_email", "draft_supplier_order_email") \
+                        _status = "Sending email…" if block.name in ("send_email", "compose_email", "draft_supplier_order_email", "draft_client_update_email") \
                             else "Checking inbox…" if block.name in ("list_emails", "read_email") \
                             else "Updating calendar…" if block.name in ("confirm_calendar_event", "propose_calendar_event", "list_upcoming_events") \
                             else "Setting reminder…" if block.name == "schedule_reminder" \
