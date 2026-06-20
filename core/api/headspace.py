@@ -17,9 +17,16 @@ from workers.arq_pool import get_pool
 router = APIRouter(prefix="/headspace", tags=["headspace"])
 
 
+class ImageAttachment(BaseModel):
+    type: str = "image"
+    media_type: str = "image/jpeg"
+    data: str  # base64-encoded
+
+
 class HeadspaceChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
+    images: list[ImageAttachment] = []
 
 
 @router.post("/chat")
@@ -66,9 +73,11 @@ async def headspace_chat(
     _SAST = timezone(timedelta(hours=2))
     context["current_datetime"] = datetime.now(_SAST).strftime("%A, %d %B %Y at %H:%M SAST")
 
+    attachments = [{"type": a.type, "media_type": a.media_type, "data": a.data} for a in body.images] or None
+
     agent = get_agent(routing.workspace)
     full_response = ""
-    async for event in agent.handle(body.message, context, session):
+    async for event in agent.handle(body.message, context, session, attachments=attachments):
         if event.event == "token":
             full_response += json.loads(event.data).get("content", "")
 

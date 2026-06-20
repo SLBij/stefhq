@@ -33,6 +33,8 @@ async def send_morning_briefing(ctx):
         return
 
     today = date.today()
+    if today.weekday() >= 5:  # Sat=5, Sun=6
+        return
 
     async with async_session_factory() as session:
         result = await session.execute(
@@ -93,6 +95,8 @@ async def send_evening_briefing(ctx):
         return
 
     today = date.today()
+    if today.weekday() >= 5:  # Sat=5, Sun=6
+        return
 
     async with async_session_factory() as session:
         result = await session.execute(

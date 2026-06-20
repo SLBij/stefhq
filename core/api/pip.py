@@ -18,9 +18,16 @@ router = APIRouter(prefix="/pip", tags=["pip"])
 _agent = BusinessAgent()
 
 
+class ImageAttachment(BaseModel):
+    type: str = "image"
+    media_type: str = "image/jpeg"
+    data: str  # base64-encoded
+
+
 class PipChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
+    images: list[ImageAttachment] = []
 
 
 @router.post("/chat")
@@ -66,8 +73,10 @@ async def pip_chat(
     context["current_datetime"] = datetime.now(_SAST).strftime("%A, %d %B %Y at %H:%M SAST")
     context["user_id"] = user.id
 
+    attachments = [{"type": a.type, "media_type": a.media_type, "data": a.data} for a in body.images] or None
+
     full_response = ""
-    async for event in _agent.handle(body.message, context, session):
+    async for event in _agent.handle(body.message, context, session, attachments=attachments):
         if event.event == "token":
             full_response += json.loads(event.data).get("content", "")
 

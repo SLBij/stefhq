@@ -1403,6 +1403,7 @@ class BusinessAgent(DeskAgent):
         # Quote/invoice URL — same endpoint, adapts to job state
         share_token = job.get("share_token")
         shared_url = f"{self._CRM_BASE}quote-view.html?token={share_token}" if share_token else None
+        track_url = f"https://certaincurtains.co.za/private/track.html?token={share_token}" if share_token else None
         no_link_note = "(Tip: click Share Quote in the CRM to generate a shareable link for this job.)"
 
         def fmt_amount(amount) -> str:
@@ -1417,64 +1418,97 @@ class BusinessAgent(DeskAgent):
         except (TypeError, ValueError):
             part_str = "the deposit amount"
         install_str = install_date or "to be confirmed"
-        extra = f"\n\n{extra_context}" if extra_context else ""
+        extra = extra_context or ""
 
         templates = {
             "quote_follow_up": (
                 f"Following up on your quote — {quote_ref}",
                 (
-                    f"Hi {first_name},\n\nI hope you're well! I just wanted to follow up on the quote we sent for your curtains and blinds.\n\n"
-                    f"If you have any questions or would like to make any changes, please don't hesitate to get in touch — we're happy to chat through the details.\n"
+                    f"Hi {first_name},\n\n"
+                    f"I just wanted to follow up on the quote we sent through for your curtains and blinds.\n\n"
+                    f"Please let me know if you have any questions, or if there's anything you'd like me to adjust. "
+                    f"I'm happy to chat through the options with you.\n"
                     + (f"\nYour quote is here if you need it:\n{shared_url}\n" if shared_url else f"\n{no_link_note}\n")
-                    + f"{extra}\n\nLooking forward to hearing from you!\n\nWarm regards,\nStef\nCertain Curtains"
+                    + (f"\n{extra}\n" if extra else "")
+                    + f"\nWarm regards,\n"
+                    f"Stef\n"
+                    f"Certain Curtains"
                 )
             ),
             "payment_request": (
-                f"Deposit required to proceed — {quote_ref}",
+                f"Your quote — {quote_ref}",
                 (
-                    f"Hi {first_name},\n\nThank you for accepting your quote — we're excited to get started on your curtains!\n\n"
-                    f"To get your order into production, we ask for an 80% deposit of {part_str}. Please transfer to:\n\n"
-                    f"{bank_block}\n\n"
-                    f"Kindly use your name as reference and send proof of payment via WhatsApp or email once done.\n"
-                    + (f"\nYour quote is here if you need it:\n{shared_url}\n" if shared_url else f"\n{no_link_note}\n")
-                    + f"{extra}\n\nLooking forward to getting your order underway!\n\nWarm regards,\nStef\nCertain Curtains"
+                    f"Hi {first_name},\n\n"
+                    f"Please find your quote for your curtains and blinds here:\n\n"
+                    + (f"{shared_url}\n\n" if shared_url else f"{no_link_note}\n\n")
+                    + f"When you're ready to go ahead, you can accept the quote online. "
+                    f"Once accepted, you'll be redirected to the invoice with the part-payment details.\n\n"
+                    f"We ask for an 80% part-payment of {part_str} before getting your order into production.\n\n"
+                    f"Please feel free to let me know if you have any questions, or if there's anything you'd like me to adjust before accepting."
+                    + (f"\n\n{extra}" if extra else "")
+                    + f"\n\nWarm regards,\n"
+                    f"Stef\n"
+                    f"Certain Curtains"
                 )
             ),
             "production_update": (
-                f"Update on your curtains — {quote_ref}",
+                f"Your order is active — {quote_ref}",
                 (
-                    f"Hi {first_name},\n\nJust a quick update on your order — your curtains are currently {production_status}. "
-                    f"Everything is on track and we'll be in touch as soon as we have a confirmed installation date."
-                    f"{extra}\n\nDon't hesitate to reach out if you have any questions in the meantime!\n\nWarm regards,\nStef\nCertain Curtains"
+                    f"Hi {first_name},\n\n"
+                    f"Your part-payment has been received, and your order is now active.\n\n"
+                    + (f"You can track your order here at any time:\n\n{track_url}\n\n" if track_url else f"{no_link_note}\n\n")
+                    + f"We'll be in touch once we have a confirmed installation date."
+                    + (f"\n\n{extra}" if extra else "")
+                    + f"\n\nWarm regards,\n"
+                    f"Stef\n"
+                    f"Certain Curtains"
                 )
             ),
             "delay_notice": (
                 f"Update regarding your order — {quote_ref}",
                 (
-                    f"Hi {first_name},\n\nI wanted to reach out regarding your curtain order. Unfortunately we've experienced a delay"
-                    + (f" — {delay_reason}" if delay_reason else "")
-                    + ".\n\nWe sincerely apologise for the inconvenience and are doing everything we can to get your order completed as soon as possible. "
-                    f"We'll keep you updated every step of the way.\n\nThank you so much for your patience and understanding.\n\nWarm regards,\nStef\nCertain Curtains"
+                    f"Hi {first_name},\n\n"
+                    f"I wanted to give you a quick update on your curtain order.\n\n"
+                    f"Unfortunately, we've run into a slight delay, so your order is taking a little longer than expected. "
+                    f"I'm really sorry for the inconvenience.\n\n"
+                    + (f"This is due to {delay_reason}.\n\n" if delay_reason else "")
+                    + f"We're doing everything we can to complete it as soon as possible, and I'll keep you updated on our progress.\n\n"
+                    f"Thank you so much for your patience and understanding.\n\n"
+                    f"Warm regards,\n"
+                    f"Stef\n"
+                    f"Certain Curtains"
                 )
             ),
             "install_confirmation": (
-                f"Installation confirmed — {quote_ref}",
+                f"Your installation is confirmed — {quote_ref}",
                 (
-                    f"Hi {first_name},\n\nGreat news — your curtains are ready! We've confirmed your installation for {install_str}."
-                    f"{extra}\n\n"
-                    f"Please ensure someone is home to grant access. If anything comes up before then, please let us know as soon as possible so we can reschedule.\n\n"
-                    f"We can't wait for you to see the finished result!\n\nWarm regards,\nStef\nCertain Curtains"
+                    f"Hi {first_name},\n\n"
+                    f"Good news — your curtains are ready.\n\n"
+                    f"We've confirmed your installation for {install_str}.\n\n"
+                    f"Please read through the installation information before we arrive so everything can go smoothly on the day:\n\n"
+                    f"http://certaincurtains.co.za/private/install-info.html\n\n"
+                    f"Please make sure someone will be home to give us access. "
+                    f"If anything changes before then, please let me know as soon as possible so we can reschedule."
+                    + (f"\n\n{extra}" if extra else "")
+                    + f"\n\nWarm regards,\n"
+                    f"Stef\n"
+                    f"Certain Curtains"
                 )
             ),
             "final_payment_request": (
                 f"Final balance due — {quote_ref}",
                 (
-                    f"Hi {first_name},\n\nThank you so much — your installation is complete and we hope you're loving your new curtains!\n\n"
+                    f"Hi {first_name},\n\n"
+                    f"Thank you — your installation is now complete.\n\n"
                     f"The final balance of {total_str} is now due. Please transfer to:\n\n"
                     f"{bank_block}\n\n"
-                    f"Kindly use your invoice number as reference and send proof of payment via WhatsApp or email."
+                    f"Please use your invoice number as reference and send proof of payment via WhatsApp or email once done."
                     + (f"\n\nYou can view your invoice here:\n{shared_url}" if shared_url else f"\n\n{no_link_note}")
-                    + f"{extra}\n\nIt was an absolute pleasure working with you — thank you for choosing Certain Curtains!\n\nWarm regards,\nStef\nCertain Curtains"
+                    + (f"\n\n{extra}" if extra else "")
+                    + f"\n\nThank you again for choosing Certain Curtains. I hope you enjoy your new curtains.\n\n"
+                    f"Warm regards,\n"
+                    f"Stef\n"
+                    f"Certain Curtains"
                 )
             ),
         }
