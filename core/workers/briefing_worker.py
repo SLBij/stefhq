@@ -157,6 +157,11 @@ async def send_business_briefing(ctx):
     if today.weekday() >= 5:  # Sat=5, Sun=6
         return
 
+    from services.briefing_settings import get_pause_until
+    paused_until = await get_pause_until()
+    if paused_until and today.isoformat() <= paused_until:
+        return
+
     supabase_url = settings.curtains_supabase_url
     supabase_headers = {
         "Authorization": f"Bearer {settings.curtains_supabase_key}",

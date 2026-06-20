@@ -72,6 +72,8 @@ Tools:
 - schedule_reminder: schedule a Telegram reminder at a specific date/time — use for follow-ups, deadlines, anything time-based
 - list_reminders: show all pending business reminders not yet fired
 - cancel_reminder: cancel a pending reminder by ID (get ID from list_reminders)
+- pause_briefing: pause Pip's morning briefing until a date (inclusive) — use when Stef says she's on leave or away
+- resume_briefing: immediately cancel a briefing pause
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 email drafting, calendar management, and day-to-day business decisions. Be practical and direct — Stef \
@@ -602,6 +604,22 @@ _TOOLS = [
             "required": ["reminder_id"],
         },
     },
+    {
+        "name": "pause_briefing",
+        "description": "Pause Pip's morning business briefing until a specified date (inclusive). Use when Stef is on leave or away. Briefings resume automatically the next working day after the pause date.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "until_date": {"type": "string", "description": "ISO 8601 date (YYYY-MM-DD) — last day to skip. E.g. '2026-07-04' pauses through that Friday and resumes Monday."},
+            },
+            "required": ["until_date"],
+        },
+    },
+    {
+        "name": "resume_briefing",
+        "description": "Immediately cancel a briefing pause and resume Pip's morning briefings from tomorrow.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 
@@ -978,6 +996,21 @@ class BusinessAgent(DeskAgent):
         from services.reminders import cancel
         ok = await cancel(session, reminder_id)
         return "Reminder cancelled." if ok else "Reminder not found — it may have already fired."
+
+    async def _pause_briefing(self, until_date: str) -> str:
+        from datetime import date
+        from services.briefing_settings import set_pause_until
+        try:
+            date.fromisoformat(until_date)
+        except ValueError:
+            return f"Invalid date '{until_date}' — use YYYY-MM-DD."
+        await set_pause_until(until_date)
+        return f"Briefings paused until {until_date} (inclusive). They'll resume automatically after that."
+
+    async def _resume_briefing(self) -> str:
+        from services.briefing_settings import clear_pause
+        await clear_pause()
+        return "Briefing pause cleared — morning briefings will resume from tomorrow."
 
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -1824,6 +1857,10 @@ class BusinessAgent(DeskAgent):
                 return await self._list_reminders(session)
             elif name == "cancel_reminder":
                 return await self._cancel_reminder(session, tool_input["reminder_id"])
+            elif name == "pause_briefing":
+                return await self._pause_briefing(tool_input["until_date"])
+            elif name == "resume_briefing":
+                return await self._resume_briefing()
             elif name == "read_notes":
                 return await self._read_notes(session)
             elif name == "append_note":
