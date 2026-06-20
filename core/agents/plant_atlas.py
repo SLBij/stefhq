@@ -31,6 +31,7 @@ Care context:
 - Cape Town, South Africa — Mediterranean: warm dry summers, mild wet winters
 - Most aroids need less water in winter, more in summer
 - Common issues: spider mites in dry summer air, fungus gnats from winter overwatering
+- Hybrid notation: "A × B" is ONE plant (a cross between A and B) — never split it into two separate entries
 - Always use get_care_history to answer "when did I last water X?" — never guess
 - When a pest is mentioned: log_issue first, then treatment plan, then offer a reminder
 
