@@ -356,13 +356,18 @@ class PlantAtlasAgent(DeskAgent):
 
         if query:
             q = query.lower()
-            all_plants = [
-                p for p in all_plants
-                if q in (p.get("displayName") or "").lower()
-                or q in (p.get("botanicalName") or "").lower()
-                or q in (p.get("commonName") or "").lower()
-                or q in (p.get("location") or "").lower()
-            ]
+            # Token-level OR: each word in the query is checked independently so
+            # "Anthurium Warocqueanum × Papillilaminum" still finds "Anthurium woroqueanum x papi"
+            tokens = [t for t in q.split() if len(t) > 1 and t not in {"×", "x"}]
+
+            def _matches(p: dict) -> bool:
+                haystack = " ".join(filter(None, [
+                    p.get("displayName"), p.get("botanicalName"),
+                    p.get("commonName"), p.get("location"),
+                ])).lower()
+                return q in haystack or any(t in haystack for t in tokens)
+
+            all_plants = [p for p in all_plants if _matches(p)]
 
         if not all_plants:
             return "No plants found matching that query."
