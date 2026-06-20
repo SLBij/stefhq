@@ -1,10 +1,37 @@
+import asyncio
+
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from agents.router import Workspace
-from models.db import Conversation, Memory
+from database import async_session_factory
+from models.db import Memory, Message, Conversation
 from services.memory import search_memories
+
+
+async def _pinned_memories(workspace: str) -> list[Memory]:
+    async with async_session_factory() as s:
+        result = await s.execute(
+            sa.select(Memory)
+            .where(
+                Memory.confirmed == True,
+                Memory.workspace == workspace,
+                Memory.tags.contains(["agent_name"]),
+            )
+            .limit(5)
+        )
+        return list(result.scalars().all())
+
+
+async def _recent_history(conversation_id) -> list[Message]:
+    async with async_session_factory() as s:
+        result = await s.execute(
+            sa.select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc())
+            .limit(10)
+        )
+        return list(reversed(result.scalars().all()))
 
 
 async def assemble_context(
@@ -14,34 +41,18 @@ async def assemble_context(
     conversation: Conversation,
     entities: list[str],
 ) -> dict:
-    memories = await search_memories(
-        session=session,
-        query=message,
-        workspace=workspace.value,
-        limit=10,
+    # These three reads are independent — run them on separate connections concurrently
+    # instead of serially, to avoid paying the EU-VPS-to-us-east-1-Neon round-trip cost
+    # (~100ms each) one after another. (Can't share `session` across concurrent awaits —
+    # asyncpg connections don't support concurrent operations on the same connection.)
+    memories, pinned, history = await asyncio.gather(
+        search_memories(session=session, query=message, workspace=workspace.value, limit=10),
+        _pinned_memories(workspace.value),
+        _recent_history(conversation.id),
     )
 
-    # Always pin tagged memories (e.g. agent_name) regardless of semantic relevance
-    pinned_result = await session.execute(
-        sa.select(Memory)
-        .where(
-            Memory.confirmed == True,
-            Memory.workspace == workspace.value,
-            Memory.tags.contains(["agent_name"]),
-        )
-        .limit(5)
-    )
-    pinned = list(pinned_result.scalars().all())
     seen_ids = {m.id for m in pinned}
     merged = pinned + [m for m in memories if m.id not in seen_ids]
-
-    result = await session.execute(
-        sa.select(Conversation)
-        .where(Conversation.id == conversation.id)
-        .options(selectinload(Conversation.messages))
-    )
-    conv = result.scalar_one_or_none()
-    history = conv.messages[-10:] if conv and conv.messages else []
 
     return {
         "memories": [

@@ -30,9 +30,14 @@ async def search_memories(
             base.order_by(Memory.created_at.desc()).limit(limit)
         )
     memories = list(result.scalars().all())
-    for m in memories:
-        m.last_accessed_at = sa.func.now()
     if memories:
+        # Single bulk UPDATE instead of one per row — avoids N extra round trips
+        # to Neon for what's just relevance-decay bookkeeping.
+        await session.execute(
+            sa.update(Memory)
+            .where(Memory.id.in_([m.id for m in memories]))
+            .values(last_accessed_at=sa.func.now())
+        )
         await session.commit()
     return memories
 
