@@ -12,33 +12,54 @@ from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
 _SYSTEM = """You are Fern — Stef's plant knowledge partner in Plant Atlas, her personal research and \
-management desk for her FloraFolio collection.
+management desk for her FloraFolio collection, and her co-author for the FloraFolio species encyclopedia.
 
-You have direct access to Stef's plant collection and care history. ALWAYS use tools to answer \
-questions about her plants. Never guess care history — use get_care_history.
+You have two modes of work:
 
-Tools:
-- search_plants: search or browse the full collection — use first when a plant is mentioned
-- get_plant: get full details for a specific plant by ID (lastWatered, wateringDays, status, location, etc.)
+── PERSONAL COLLECTION ──────────────────────────────────────────────
+Tools for Stef's own plants (collection, care, pests):
+- search_plants: search or browse the collection — use first when a plant is mentioned
+- get_plant: full details for a plant by ID (lastWatered, wateringDays, status, location, etc.)
 - add_plant: add a new plant — always search first to check for duplicates
-- update_plant: update a plant's location, care notes, status, watering schedule, etc.
+- update_plant: update location, care notes, status, watering schedule, etc.
 - log_care: log a care event — watered, fed, inspected, treated, repotted
-- get_care_history: see recent care logs for a plant (when last watered, fed, etc.)
-- get_issues: see active pest or disease issues — all plants or a specific one
-- log_issue: record a new pest or disease issue on a plant
-- schedule_reminder: set a Telegram reminder for a plant care task (spider mite treatment, repotting, etc.)
-- list_reminders: see pending plant reminders
-- cancel_reminder: cancel a pending reminder by ID
+- get_care_history: recent care logs per plant (when last watered, fed, etc.)
+- get_issues / log_issue: pest and disease tracking
+- schedule_reminder / list_reminders / cancel_reminder: Telegram care reminders
 
-Care knowledge context:
-- Stef is in Cape Town, South Africa — Mediterranean climate: warm dry summers, mild wet winters
-- Factor this into watering advice (most aroids need less water in winter, more in summer)
-- Cape Town tap water is fine for most plants
-- Common issues in Cape Town conditions: spider mites in dry summer air, fungus gnats in winter overwatering
+Care context:
+- Cape Town, South Africa — Mediterranean: warm dry summers, mild wet winters
+- Most aroids need less water in winter, more in summer
+- Common issues: spider mites in dry summer air, fungus gnats from winter overwatering
+- Always use get_care_history to answer "when did I last water X?" — never guess
+- When a pest is mentioned: log_issue first, then treatment plan, then offer a reminder
 
-When logging care, always confirm what was logged and for which plant.
-When answering "when did I last water X?" — use get_care_history with type=watered, not get_plant.
-When a pest/disease is mentioned — log_issue first, then suggest a treatment plan and offer to set a reminder.
+── SPECIES ENCYCLOPEDIA ─────────────────────────────────────────────
+Tools for drafting and submitting plant pages to the shared FloraFolio database \
+(appears on both the FloraFolio website and app encyclopedia):
+- search_species: check if a species already exists in the encyclopedia
+- get_species: get the full record for an existing species by ID
+- create_species: submit a new species/cultivar entry (all entries start as draft + ai_generated=true)
+- update_species: correct or fill in gaps on an existing entry
+
+Encyclopedia workflow:
+1. When Stef asks to add a species, first call search_species to check it doesn't exist
+2. Draft ALL fields from your botanical knowledge — be thorough and accurate
+3. Show the full draft clearly before submitting (Stef reviews it)
+4. After confirmation, call create_species
+5. Stef adds illustrations manually via the FloraFolio app or admin
+
+Field guidance:
+- commonNames: pipe-separated e.g. "Monstera|Swiss Cheese Plant|Split-leaf Philodendron"
+- sources: pipe-separated citations/URLs
+- commonProblems / funFacts: newline-separated, one item per line
+- plantCategory: species | subspecies | variety | form | cultivar | hybrid | trade_name
+- confidenceLevel: always use "draft" unless Stef says otherwise
+- For cultivars: set parentId to the parent species ID (search_species first to get it)
+- hybridParents: pipe-separated botanical names of parent species
+- light: low | indirect | bright-indirect | direct
+- growthHabit: crawler | climber | upright | trailing | rosette | clumping
+- difficulty: easy | moderate | challenging
 
 Relevant memories and prior conversation are provided as context.""" + agent_name_prompt(
     "plant and botany specialist — nature-inspired, nurturing, earthy"
@@ -160,6 +181,127 @@ _TOOLS = [
                 "notes":          {"type": "string", "description": "Any extra notes"},
             },
             "required": ["plant_id", "type"],
+        },
+    },
+    {
+        "name": "search_species",
+        "description": "Search the FloraFolio species encyclopedia by botanical name, common name, or genus. Use before create_species to check for duplicates, or to find parentId for a cultivar entry.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Botanical name, common name, or genus to search for"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_species",
+        "description": "Get the full species record by ID (from search_species). Use to inspect an existing entry before updating.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "species_id": {"type": "string", "description": "Species UUID from search_species"},
+            },
+            "required": ["species_id"],
+        },
+    },
+    {
+        "name": "create_species",
+        "description": (
+            "Submit a new species or cultivar entry to the FloraFolio encyclopedia. "
+            "ALWAYS show the full draft to Stef and wait for confirmation before calling. "
+            "All entries are marked aiGenerated=true and confidenceLevel='draft' automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "botanical":          {"type": "string", "description": "Full scientific name e.g. 'Monstera deliciosa'"},
+                "common_names":       {"type": "string", "description": "Pipe-separated common names e.g. 'Monstera|Swiss Cheese Plant'"},
+                "genus":              {"type": "string", "description": "Genus name e.g. 'Monstera'"},
+                "family":             {"type": "string", "description": "Plant family e.g. 'Araceae'"},
+                "plant_category":     {"type": "string", "description": "species | subspecies | variety | form | cultivar | hybrid | trade_name"},
+                "origin":             {"type": "string", "description": "Geographic origin e.g. 'Central and South America'"},
+                "natural_range":      {"type": "string", "description": "More specific habitat / natural range description"},
+                "pronunciation":      {"type": "string", "description": "Phonetic pronunciation e.g. 'mon-STAIR-uh deh-lee-see-OH-suh'"},
+                "etymology":          {"type": "string", "description": "Meaning/origin of the scientific name"},
+                "discovery_year":     {"type": "integer", "description": "Year first described"},
+                "first_described_by": {"type": "string", "description": "Botanist who first described it"},
+                "light":              {"type": "string", "description": "low | indirect | bright-indirect | direct"},
+                "watering_days":      {"type": "integer", "description": "Typical days between waterings"},
+                "humidity":           {"type": "string", "description": "low | medium | high"},
+                "temp_min":           {"type": "integer", "description": "Minimum temperature (°C)"},
+                "temp_max":           {"type": "integer", "description": "Maximum temperature (°C)"},
+                "feeding_schedule":   {"type": "string", "description": "e.g. 'Monthly during growing season (spring/summer)'"},
+                "growth_rate":        {"type": "string", "description": "slow | medium | fast"},
+                "growth_habit":       {"type": "string", "description": "crawler | climber | upright | trailing | rosette | clumping"},
+                "mature_height":      {"type": "string", "description": "e.g. '1–3m indoors'"},
+                "mature_spread":      {"type": "string", "description": "e.g. '60–90cm'"},
+                "difficulty":         {"type": "string", "description": "easy | moderate | challenging"},
+                "toxic_to_pets":      {"type": "boolean"},
+                "toxic_to_humans":    {"type": "boolean"},
+                "toxicity_notes":     {"type": "string", "description": "What's toxic, symptoms, severity"},
+                "leaf_description":   {"type": "string", "description": "Detailed leaf morphology"},
+                "growth_description": {"type": "string", "description": "Overall growth form and habits"},
+                "botanical_notes":    {"type": "string", "description": "Discovery history, taxonomy, interesting botanical context"},
+                "care_notes":         {"type": "string", "description": "General care summary"},
+                "common_problems":    {"type": "string", "description": "Newline-separated list of common issues"},
+                "repotting_notes":    {"type": "string", "description": "When and how to repot"},
+                "fun_facts":          {"type": "string", "description": "Newline-separated interesting facts"},
+                "parent_id":          {"type": "string", "description": "Species UUID of parent — required for cultivars/varieties (from search_species)"},
+                "cultivar_name":      {"type": "string", "description": "Cultivar name without quotes e.g. 'Thai Constellation'"},
+                "hybrid_parents":     {"type": "string", "description": "Pipe-separated parent botanical names for hybrids"},
+                "sources":            {"type": "string", "description": "Pipe-separated citations or URLs"},
+                "confidence_level":   {"type": "string", "description": "draft (default) | community | verified | expert"},
+            },
+            "required": ["botanical"],
+        },
+    },
+    {
+        "name": "update_species",
+        "description": "Update fields on an existing species entry. Use species_id from search_species or get_species.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "species_id":         {"type": "string", "description": "Species UUID"},
+                "botanical":          {"type": "string"},
+                "common_names":       {"type": "string"},
+                "genus":              {"type": "string"},
+                "family":             {"type": "string"},
+                "plant_category":     {"type": "string"},
+                "origin":             {"type": "string"},
+                "natural_range":      {"type": "string"},
+                "pronunciation":      {"type": "string"},
+                "etymology":          {"type": "string"},
+                "discovery_year":     {"type": "integer"},
+                "first_described_by": {"type": "string"},
+                "light":              {"type": "string"},
+                "watering_days":      {"type": "integer"},
+                "humidity":           {"type": "string"},
+                "temp_min":           {"type": "integer"},
+                "temp_max":           {"type": "integer"},
+                "feeding_schedule":   {"type": "string"},
+                "growth_rate":        {"type": "string"},
+                "growth_habit":       {"type": "string"},
+                "mature_height":      {"type": "string"},
+                "mature_spread":      {"type": "string"},
+                "difficulty":         {"type": "string"},
+                "toxic_to_pets":      {"type": "boolean"},
+                "toxic_to_humans":    {"type": "boolean"},
+                "toxicity_notes":     {"type": "string"},
+                "leaf_description":   {"type": "string"},
+                "growth_description": {"type": "string"},
+                "botanical_notes":    {"type": "string"},
+                "care_notes":         {"type": "string"},
+                "common_problems":    {"type": "string"},
+                "repotting_notes":    {"type": "string"},
+                "fun_facts":          {"type": "string"},
+                "parent_id":          {"type": "string"},
+                "cultivar_name":      {"type": "string"},
+                "hybrid_parents":     {"type": "string"},
+                "sources":            {"type": "string"},
+                "confidence_level":   {"type": "string"},
+            },
+            "required": ["species_id"],
         },
     },
     {
@@ -377,6 +519,69 @@ class PlantAtlasAgent(DeskAgent):
         ok = await cancel(session, reminder_id)
         return "Reminder cancelled." if ok else "Reminder not found — it may have already fired."
 
+    # ── Species encyclopedia ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _snake_to_camel(key: str) -> str:
+        parts = key.split("_")
+        return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+    def _species_payload(self, tool_input: dict) -> dict:
+        skip = {"species_id"}
+        return {self._snake_to_camel(k): v for k, v in tool_input.items() if k not in skip}
+
+    async def _search_species(self, query: str) -> str:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{self._base()}/species",
+                params={"query": query},
+                headers=self._headers(),
+            )
+            r.raise_for_status()
+        rows = r.json()
+        if not rows:
+            return "No matching species found in the encyclopedia."
+        lines = []
+        for s in rows:
+            names = f" ({s['commonNames']})" if s.get("commonNames") else ""
+            lines.append(f"- [{s['id']}] {s['botanical']}{names} — {s.get('confidenceLevel', 'draft')}")
+        return "\n".join(lines)
+
+    async def _get_species(self, species_id: str) -> str:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{self._base()}/species/{species_id}",
+                headers=self._headers(),
+            )
+            r.raise_for_status()
+        return json.dumps(r.json(), indent=2)
+
+    async def _create_species(self, tool_input: dict) -> str:
+        payload = self._species_payload(tool_input)
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{self._base()}/species",
+                json=payload,
+                headers=self._json_headers(),
+            )
+            r.raise_for_status()
+        row = r.json()
+        return f"Species created: [{row['id']}] {row['botanical']} — slug: {row['slug']}"
+
+    async def _update_species(self, species_id: str, tool_input: dict) -> str:
+        payload = self._species_payload(tool_input)
+        if not payload:
+            return "No fields to update."
+        async with httpx.AsyncClient() as client:
+            r = await client.patch(
+                f"{self._base()}/species/{species_id}",
+                json=payload,
+                headers=self._json_headers(),
+            )
+            r.raise_for_status()
+        row = r.json()
+        return f"Species updated: {row['botanical']}"
+
     async def _execute_tool(self, name: str, tool_input: dict, session: AsyncSession) -> str:
         try:
             if name == "save_agent_name":
@@ -419,6 +624,15 @@ class PlantAtlasAgent(DeskAgent):
                 return await self._list_reminders(session)
             elif name == "cancel_reminder":
                 return await self._cancel_reminder(session, tool_input["reminder_id"])
+            elif name == "search_species":
+                return await self._search_species(tool_input.get("query", ""))
+            elif name == "get_species":
+                return await self._get_species(tool_input["species_id"])
+            elif name == "create_species":
+                return await self._create_species(tool_input)
+            elif name == "update_species":
+                species_id = tool_input.pop("species_id")
+                return await self._update_species(species_id, tool_input)
             return "Unknown tool"
         except Exception as e:
             return f"Tool error: {e}"
