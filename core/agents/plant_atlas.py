@@ -185,6 +185,18 @@ _TOOLS = [
         },
     },
     {
+        "name": "delete_plant",
+        "description": "Permanently delete a plant record — use only for genuine data entry errors (duplicates, wrong splits, etc.). Always confirm with Stef before deleting.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "plant_id": {"type": "string", "description": "Plant UUID from search_plants"},
+                "reason":   {"type": "string", "description": "Brief reason e.g. 'data entry error — hybrid split incorrectly'"},
+            },
+            "required": ["plant_id", "reason"],
+        },
+    },
+    {
         "name": "search_species",
         "description": "Search the FloraFolio species encyclopedia by botanical name, common name, or genus. Use before create_species to check for duplicates, or to find parentId for a cultivar entry.",
         "input_schema": {
@@ -525,6 +537,14 @@ class PlantAtlasAgent(DeskAgent):
         ok = await cancel(session, reminder_id)
         return "Reminder cancelled." if ok else "Reminder not found — it may have already fired."
 
+    async def _delete_plant(self, plant_id: str, reason: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.delete(f"{self._base()}/plants/{plant_id}", headers=self._headers())
+            if r.status_code == 404:
+                return "Plant not found."
+            r.raise_for_status()
+        return f"Plant deleted ({reason})."
+
     # ── Species encyclopedia ──────────────────────────────────────────────────
 
     @staticmethod
@@ -630,6 +650,8 @@ class PlantAtlasAgent(DeskAgent):
                 return await self._list_reminders(session)
             elif name == "cancel_reminder":
                 return await self._cancel_reminder(session, tool_input["reminder_id"])
+            elif name == "delete_plant":
+                return await self._delete_plant(tool_input["plant_id"], tool_input["reason"])
             elif name == "search_species":
                 return await self._search_species(tool_input.get("query", ""))
             elif name == "get_species":
