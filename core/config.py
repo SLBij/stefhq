@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     github_token: str = ""
 
     telegram_bot_token: str = ""
+    pip_bot_token: str = ""
     telegram_chat_id: str = ""
 
     florafolio_url: str = "http://localhost:5173"

@@ -199,7 +199,7 @@ _TOOLS = [
                 "blinds_received": {"type": "boolean", "description": "Mark blinds as received"},
                 "sewing_complete": {"type": "boolean", "description": "Mark sewing as complete"},
                 "final_payment_received": {"type": "boolean", "description": "Mark final payment received — also set status='complete' to close the job"},
-                "delay_note": {"type": "string", "description": "Delay message shown to client on status tracker (e.g. 'Fabric on backorder, estimated delay 1 week'). Pass empty string to clear."},
+                "delay_note": {"type": "string", "description": "Delay message shown to client on their order status page. Pass empty string \"\" to clear it. Example: 'Fabric on backorder, estimated delay 1 week'."},
                 "status": {
                     "type": "string",
                     "enum": ["active", "complete", "archived"],
