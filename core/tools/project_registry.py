@@ -29,6 +29,12 @@ PROJECTS: list[Project] = [
         keywords=["florafolio", "flora folio", "plant app", "house of leaves", "plant care app"],
     ),
     Project(
+        name="FloraFolioSite",
+        repo="SLBij/FloraFolioSite",
+        description="Public FloraFolio species encyclopedia website — SvelteKit 2, shares the same Neon plant_species table as the FloraFolio app. Fern (Plant Atlas) drafts and submits entries here.",
+        keywords=["plant_db_website", "plant db website", "florafoliosite", "florafolio site", "species website", "species encyclopedia", "plant encyclopedia"],
+    ),
+    Project(
         name="CurtainsCRM",
         repo="SLBij/curtains-crm",
         description="Certain Curtains business CRM — vanilla JS, being migrated to PostgreSQL backend.",
