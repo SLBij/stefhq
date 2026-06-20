@@ -112,6 +112,7 @@ async def get_agent_name(
             Memory.workspace == workspace,
             Memory.tags.contains(["agent_name"]),
         )
+        .order_by(Memory.created_at.desc())
         .limit(1)
     )
     memory = result.scalar_one_or_none()

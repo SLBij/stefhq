@@ -1,6 +1,8 @@
 """Shared naming tool for all workspace agents."""
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.db import Memory
 from services.memory import save_memory
 
 AGENT_NAME_TOOL = {
@@ -31,6 +33,10 @@ and introduce yourself to Stef."""
 
 
 async def save_agent_name(name: str, workspace: str, session: AsyncSession) -> str:
+    # Only one name should ever exist per workspace — clear stale/duplicate entries first
+    await session.execute(
+        sa.delete(Memory).where(Memory.workspace == workspace, Memory.tags.contains(["agent_name"]))
+    )
     await save_memory(
         session=session,
         content=name,
