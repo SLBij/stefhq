@@ -7,7 +7,8 @@ from anthropic import AsyncAnthropic
 
 from config import settings
 from database import async_session_factory
-from models.db import Task
+from integrations.google import gmail_list_messages, get_access_token
+from models.db import Conversation, GoogleToken, Message, Task
 
 
 async def send_telegram_reminder(ctx, message: str, reminder_id: str | None = None):
@@ -279,3 +280,83 @@ under 200 words. Use Telegram Markdown (*bold*, _italic_). Sign off as Pip."""
                 "parse_mode": "Markdown",
             },
         )
+
+
+async def send_email_digest(ctx):
+    """Midday email digest via Pip bot — 12pm SAST (10:00 UTC), weekdays only, separate from the morning briefing."""
+    if not settings.pip_bot_token or not settings.telegram_chat_id:
+        return
+
+    today = date.today()
+    if today.weekday() >= 5:  # Sat=5, Sun=6
+        return
+
+    from services.email_noise import list_noise_patterns
+
+    async with async_session_factory() as session:
+        result = await session.execute(sa.select(GoogleToken.user_id).limit(1))
+        user_id = result.scalar_one_or_none()
+        if not user_id:
+            return
+        access_token = await get_access_token(user_id, session)
+
+        gmail_query = f"in:inbox after:{today.strftime('%Y/%m/%d')}"
+        emails = await gmail_list_messages(access_token, gmail_query, max_results=20)
+        if not emails:
+            return
+
+        noise_patterns = await list_noise_patterns()
+        noise_block = "\n".join(f"- {p}" for p in noise_patterns) if noise_patterns else "(none configured yet)"
+        email_block = "\n\n".join(
+            f"From: {e['from']}\nSubject: {e['subject']}\nDate: {e['date']}\nSnippet: {e['snippet']}"
+            for e in emails
+        )
+
+        prompt = f"""Today is {today.strftime('%A, %d %B %Y')}. Here are today's inbox emails for Certain Curtains:
+
+{email_block}
+
+Known noise to ignore (Stef doesn't want these flagged unless something about them looks unusual):
+{noise_block}
+
+Write Pip's midday email digest for Telegram. Group what's left into: 🏭 Supplier, 👤 Client, 💰 Payments, \
+🚨 Urgent, 📌 Other — only include groups that have something in them. For anything actionable (a supplier \
+invoice, a client payment proof, a complaint), end that line with a direct question Stef can just reply to \
+in this chat, e.g. "— add to payment reminders?". Skip anything clearly noise per the list above, or \
+obviously not business-relevant (newsletters, automated notifications, spam). Keep it tight — bullet \
+points, no fluff intro. Use Telegram Markdown. Sign off as Pip.
+
+If literally everything is noise and there's nothing worth Stef's attention, reply with exactly: ALL_QUIET"""
+
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        if text == "ALL_QUIET":
+            text = "📧 Checked the inbox — all quiet, nothing worth flagging."
+
+        async with httpx.AsyncClient(timeout=10) as http:
+            await http.post(
+                f"https://api.telegram.org/bot{settings.pip_bot_token}/sendMessage",
+                json={
+                    "chat_id": settings.telegram_chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                },
+            )
+
+        # Record into the persistent Telegram conversation so a reply has context to act on
+        conv_result = await session.execute(
+            sa.select(Conversation)
+            .where(Conversation.workspace == "business", Conversation.title == "📱 Telegram")
+            .order_by(Conversation.updated_at.desc())
+            .limit(1)
+        )
+        conversation = conv_result.scalar_one_or_none()
+        if conversation:
+            session.add(Message(conversation_id=conversation.id, role="assistant", content=text))
+            conversation.updated_at = datetime.now(timezone.utc)
+            await session.commit()

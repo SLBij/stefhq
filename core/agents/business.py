@@ -82,6 +82,7 @@ Tools:
 - cancel_reminder: cancel a pending reminder by ID (get ID from list_reminders)
 - pause_briefing: pause Pip's morning briefing until a date (inclusive) — use when Stef says she's on leave or away
 - resume_briefing: immediately cancel a briefing pause
+- add_email_noise_filter / remove_email_noise_filter / list_email_noise_filters: manage what the midday email digest treats as noise (recurring senders/topics Stef doesn't want flagged)
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 email drafting, calendar management, and day-to-day business decisions. Be practical and direct — Stef \
@@ -735,6 +736,33 @@ _TOOLS = [
         "description": "Immediately cancel a briefing pause and resume Pip's morning briefings from tomorrow.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "add_email_noise_filter",
+        "description": "Add a pattern to the midday email digest's noise list — matching emails won't be flagged unless something about them looks unusual. Use when Stef says to ignore a recurring sender or topic.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "What to ignore, e.g. 'QuickBooks subscription renewal' or 'noreply@mailchimp.com'"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "remove_email_noise_filter",
+        "description": "Remove a pattern from the email digest noise list. Use list_email_noise_filters to get the exact text first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Exact pattern to remove"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "list_email_noise_filters",
+        "description": "List all current noise patterns for the midday email digest.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 
@@ -1209,6 +1237,23 @@ class BusinessAgent(DeskAgent):
         from services.briefing_settings import clear_pause
         await clear_pause()
         return "Briefing pause cleared — morning briefings will resume from tomorrow."
+
+    async def _add_email_noise_filter(self, pattern: str) -> str:
+        from services.email_noise import add_noise_pattern
+        await add_noise_pattern(pattern)
+        return f"Added to noise list: {pattern}"
+
+    async def _remove_email_noise_filter(self, pattern: str) -> str:
+        from services.email_noise import remove_noise_pattern
+        removed = await remove_noise_pattern(pattern)
+        return f"Removed from noise list: {pattern}" if removed else f"'{pattern}' wasn't on the noise list — check list_email_noise_filters for the exact text."
+
+    async def _list_email_noise_filters(self) -> str:
+        from services.email_noise import list_noise_patterns
+        patterns = await list_noise_patterns()
+        if not patterns:
+            return "No noise filters configured yet."
+        return "\n".join(f"- {p}" for p in patterns)
 
     async def _log_communication(self, job_id: str, comm_type: str, note: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -1956,6 +2001,7 @@ class BusinessAgent(DeskAgent):
         "propose_calendar_event_update", "confirm_calendar_event_update", "flag_event_for_deletion",
         "draft_supplier_order_email", "draft_client_update_email", "create_purchase_order", "add_po_items",
         "update_po_status", "log_po_issue", "delete_purchase_order", "append_note", "write_notes",
+        "add_email_noise_filter", "remove_email_noise_filter",
     }
 
     async def _execute_tool(
@@ -2135,6 +2181,12 @@ class BusinessAgent(DeskAgent):
                 return await self._pause_briefing(tool_input["until_date"])
             elif name == "resume_briefing":
                 return await self._resume_briefing()
+            elif name == "add_email_noise_filter":
+                return await self._add_email_noise_filter(tool_input["pattern"])
+            elif name == "remove_email_noise_filter":
+                return await self._remove_email_noise_filter(tool_input["pattern"])
+            elif name == "list_email_noise_filters":
+                return await self._list_email_noise_filters()
             elif name == "read_notes":
                 return await self._read_notes(session)
             elif name == "append_note":
