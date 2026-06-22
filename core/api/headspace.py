@@ -46,11 +46,11 @@ async def headspace_chat(
         )
         conversation = result.scalar_one_or_none()
         if not conversation:
-            conversation = Conversation(workspace="inbox")
+            conversation = Conversation(workspace="inbox", title="📱 Telegram")
             session.add(conversation)
             await session.flush()
     else:
-        conversation = Conversation(workspace="inbox")
+        conversation = Conversation(workspace="inbox", title="📱 Telegram")
         session.add(conversation)
         await session.flush()
 

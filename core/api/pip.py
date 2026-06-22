@@ -45,11 +45,11 @@ async def pip_chat(
         )
         conversation = result.scalar_one_or_none()
         if not conversation:
-            conversation = Conversation(workspace="business")
+            conversation = Conversation(workspace="business", title="📱 Telegram")
             session.add(conversation)
             await session.flush()
     else:
-        conversation = Conversation(workspace="business")
+        conversation = Conversation(workspace="business", title="📱 Telegram")
         session.add(conversation)
         await session.flush()
 
