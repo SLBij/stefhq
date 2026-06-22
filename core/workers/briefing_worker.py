@@ -174,7 +174,7 @@ async def send_business_briefing(ctx):
             headers=supabase_headers,
             params={
                 "status": "eq.active",
-                "select": "id,client_name,quote_ref,production_status,install_date,required_date,invoice_number,final_payment_received",
+                "select": "id,client_name,quote_ref,production_status,install_date,required_date,invoice_number,invoice_sent_at,final_payment_received",
                 "order": "install_date.asc.nullslast",
                 "limit": "50",
             },
@@ -210,10 +210,24 @@ async def send_business_briefing(ctx):
         j for j in active_jobs
         if j.get("invoice_number") and not j.get("final_payment_received")
     ]
+    payment_overdue = [
+        j for j in unpaid
+        if j.get("production_status") == "installed" and j.get("invoice_sent_at")
+    ]
+    payment_overdue_ids = {j["id"] for j in payment_overdue}
+    unpaid_in_progress = [j for j in unpaid if j["id"] not in payment_overdue_ids]
     needs_orders = [j for j in active_jobs if j["id"] not in ordered_ids]
 
     def _job_line(j: dict) -> str:
         return f"  • {j['client_name']} ({j.get('quote_ref') or '—'})"
+
+    def _days_since(date_str: str) -> int | None:
+        try:
+            return (today - date.fromisoformat(date_str[:10])).days
+        except (TypeError, ValueError):
+            return None
+
+    payment_overdue.sort(key=lambda j: _days_since(j["invoice_sent_at"]) or 0, reverse=True)
 
     sections = [f"Today is {today.strftime('%A, %d %B %Y')}.", f"Active jobs: {len(active_jobs)}"]
 
@@ -226,9 +240,15 @@ async def send_business_briefing(ctx):
     if overdue:
         sections.append(f"\n⚠️ Overdue ({len(overdue)}):")
         sections += [_job_line(j) for j in overdue[:5]]
-    if unpaid:
-        sections.append(f"\n💰 Awaiting payment ({len(unpaid)}):")
-        sections += [_job_line(j) for j in unpaid[:5]]
+    if payment_overdue:
+        sections.append(f"\n🔴 Job done, payment outstanding ({len(payment_overdue)}):")
+        sections += [
+            f"  • {j['client_name']} ({j.get('quote_ref') or '—'}) — invoiced {_days_since(j['invoice_sent_at'])}d ago"
+            for j in payment_overdue[:5]
+        ]
+    if unpaid_in_progress:
+        sections.append(f"\n💰 Awaiting payment, still in production ({len(unpaid_in_progress)}):")
+        sections += [_job_line(j) for j in unpaid_in_progress[:5]]
     if needs_orders:
         sections.append(f"\n📦 Needs orders ({len(needs_orders)}):")
         sections += [_job_line(j) for j in needs_orders[:5]]
@@ -238,8 +258,9 @@ async def send_business_briefing(ctx):
     prompt = f"""{summary}
 
 Write Pip's business morning briefing for Telegram. Direct and practical — Stef runs this business herself \
-and needs to know what needs attention today. Flag installs today as urgent. Keep it under 200 words. \
-Use Telegram Markdown (*bold*, _italic_). Sign off as Pip."""
+and needs to know what needs attention today. Flag installs today as urgent, and flag "job done, payment \
+outstanding" as urgent too — the work is finished, nothing left to do but follow up on the money. Keep it \
+under 200 words. Use Telegram Markdown (*bold*, _italic_). Sign off as Pip."""
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     response = await client.messages.create(

@@ -49,7 +49,7 @@ Tools:
 - log_communication: record a call or message against a job
 - create_task: add a follow-up task to Inbox — use this instead of saying "switch to Inbox"
 - update_job: update production status, job notes, install date, job status, or payment received status/amount/date — requires job_id from get_client_jobs
-- update_client_notes: update notes on a client record — requires client_id from search_clients
+- update_client: update a client's name, phone, email, address, notes, or designer flag — requires client_id from search_clients
 - create_client: add a new client to the CRM — always search first to avoid duplicates
 - create_job: add a new job for an existing client — ALWAYS summarise details and get explicit confirmation before calling
 - compose_email: draft an email and save it to Gmail Drafts — show the full draft, then tell Stef to open Gmail to review and send. Do NOT offer to send programmatically.
@@ -74,6 +74,7 @@ Tools:
 - add_po_items: add line items (code, description, qty, unit_price) to a draft PO
 - update_po_status: progress a PO from draft → ordered → paid → received
 - log_po_issue: record a delay or problem note on a PO
+- delete_purchase_order: permanently delete a draft PO and its items — test/duplicate POs only, refuses anything past status='draft'
 - get_stock_levels: check current stock quantities, optionally filter to low stock or a category
 - get_product: look up a specific product by code or name
 - schedule_reminder: schedule a Telegram reminder at a specific date/time — use for follow-ups, deadlines, anything time-based
@@ -94,6 +95,10 @@ create and wait for explicit confirmation ("yes", "correct", "confirmed") before
 For jobs, echo back all measurements and product details — a wrong measurement means a wrong product. \
 NEVER call create_job without measurements (width + drop). If missing, ask before doing anything else — \
 Stef may be on site and can still measure; once she leaves, those numbers are gone.
+
+IMPORTANT for update_client: confirm the new value back to Stef before calling, especially for email/phone — \
+overwriting a client's contact details with a misread number means future emails/calls go to the wrong place \
+and nobody notices until it's a problem.
 
 IMPORTANT for payments: part_payment_amount is the EXPECTED deposit, calculated from the invoice — it is \
 NOT what was actually paid. part_payment_received_amount and final_payment_received_amount are the ACTUAL \
@@ -248,15 +253,20 @@ _TOOLS = [
         },
     },
     {
-        "name": "update_client_notes",
-        "description": "Update the notes field on a client record. Requires client_id from search_clients.",
+        "name": "update_client",
+        "description": "Update a client's name, phone, email, address, notes, or designer flag. Requires client_id from search_clients. Only pass the fields that are changing.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "client_id": {"type": "string", "description": "UUID of the client"},
-                "notes": {"type": "string", "description": "New notes content (replaces existing)"},
+                "name": {"type": "string", "description": "Full client name"},
+                "phone": {"type": "string", "description": "Phone number"},
+                "email": {"type": "string", "description": "Email address"},
+                "address": {"type": "string", "description": "Physical address"},
+                "notes": {"type": "string", "description": "Notes content (replaces existing)"},
+                "is_designer": {"type": "boolean", "description": "Designer client — shows fabric qty on quotes"},
             },
-            "required": ["client_id", "notes"],
+            "required": ["client_id"],
         },
     },
     {
@@ -490,7 +500,11 @@ _TOOLS = [
     },
     {
         "name": "list_unpaid_jobs",
-        "description": "Jobs with an invoice number but final payment not yet received.",
+        "description": (
+            "Jobs with an invoice number but final payment not yet received. "
+            "Each job includes days_since_invoiced and job_complete_awaiting_payment (true when "
+            "production_status is 'installed' — the work is done and only payment is outstanding, the most urgent case)."
+        ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
@@ -564,6 +578,21 @@ _TOOLS = [
                 "issue_text": {"type": "string", "description": "Description of the delay or issue"},
             },
             "required": ["po_id", "issue_text"],
+        },
+    },
+    {
+        "name": "delete_purchase_order",
+        "description": (
+            "Permanently delete a draft purchase order and its line items — for test or duplicate POs only. "
+            "Only works on status='draft'. Refuses if the PO has been ordered, paid, or received — "
+            "Stef removes those herself in the CRM if she's sure."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "po_id": {"type": "string", "description": "Purchase order UUID"},
+            },
+            "required": ["po_id"],
         },
     },
     {
@@ -862,16 +891,20 @@ class BusinessAgent(DeskAgent):
         updated = ", ".join(f"{k}={v}" for k, v in payload.items())
         return f"Job updated: {updated}"
 
-    async def _update_client_notes(self, client_id: str, notes: str) -> str:
+    async def _update_client(self, client_id: str, **kwargs) -> str:
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        if not payload:
+            return "Nothing to update — no fields provided."
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.patch(
                 f"{self._base()}/clients",
                 headers={**self._headers(), "Prefer": "return=minimal"},
                 params={"id": f"eq.{client_id}"},
-                json={"notes": notes},
+                json=payload,
             )
             resp.raise_for_status()
-        return f"Client notes updated."
+        updated = ", ".join(f"{k}={v}" for k, v in payload.items())
+        return f"Client updated: {updated}"
 
     async def _create_client(
         self,
@@ -1497,7 +1530,7 @@ class BusinessAgent(DeskAgent):
                     "status": "neq.archived",
                     "invoice_number": "not.is.null",
                     "or": "(final_payment_received.is.false,final_payment_received.is.null)",
-                    "select": "id,client_name,quote_ref,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_received_amount,final_payment_received,final_payment_received_amount,status",
+                    "select": "id,client_name,quote_ref,production_status,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_received_amount,final_payment_received,final_payment_received_amount,status",
                     "order": "invoice_sent_at.asc.nullslast",
                     "limit": "50",
                 },
@@ -1506,8 +1539,18 @@ class BusinessAgent(DeskAgent):
             jobs = r.json()
         if not jobs:
             return "No unpaid invoices."
+        from datetime import date as date_type
+        today_dt = date_type.today()
         for j in jobs:
             j["payment_status"] = self._payment_status(j)
+            sent = j.get("invoice_sent_at")
+            j["days_since_invoiced"] = None
+            if sent:
+                try:
+                    j["days_since_invoiced"] = (today_dt - date_type.fromisoformat(sent[:10])).days
+                except ValueError:
+                    pass
+            j["job_complete_awaiting_payment"] = j.get("production_status") == "installed"
         return json.dumps(jobs)
 
     async def _draft_supplier_order_email(
@@ -1807,6 +1850,36 @@ class BusinessAgent(DeskAgent):
             rp.raise_for_status()
         return "Issue logged on PO."
 
+    async def _delete_purchase_order(self, po_id: str) -> str:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{self._base()}/purchase_orders", headers=self._headers(),
+                params={"id": f"eq.{po_id}", "select": "id,status"},
+            )
+            r.raise_for_status()
+            rows = r.json()
+            if not rows:
+                return f"PO {po_id} not found."
+            status = rows[0].get("status")
+            if status != "draft":
+                return (
+                    f"Refusing to delete: PO is status='{status}', not 'draft'. "
+                    f"Pip only deletes draft POs — remove this one yourself in the CRM if you're sure."
+                )
+            ri = await client.delete(
+                f"{self._base()}/purchase_order_items",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                params={"po_id": f"eq.{po_id}"},
+            )
+            ri.raise_for_status()
+            rp = await client.delete(
+                f"{self._base()}/purchase_orders",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                params={"id": f"eq.{po_id}"},
+            )
+            rp.raise_for_status()
+        return "Draft PO deleted."
+
     async def _get_stock_levels(
         self, low_only: bool = False, category: str | None = None
     ) -> str:
@@ -1877,12 +1950,12 @@ class BusinessAgent(DeskAgent):
         return "Notes updated."
 
     _WRITE_TOOLS = {
-        "create_task", "update_job", "update_client_notes", "log_communication",
+        "create_task", "update_job", "update_client", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
         "propose_calendar_event", "confirm_calendar_event", "schedule_reminder", "cancel_reminder",
         "propose_calendar_event_update", "confirm_calendar_event_update", "flag_event_for_deletion",
         "draft_supplier_order_email", "draft_client_update_email", "create_purchase_order", "add_po_items",
-        "update_po_status", "log_po_issue", "append_note", "write_notes",
+        "update_po_status", "log_po_issue", "delete_purchase_order", "append_note", "write_notes",
     }
 
     async def _execute_tool(
@@ -1908,10 +1981,11 @@ class BusinessAgent(DeskAgent):
                 await log_activity(session, "web", self.workspace.value, "tool_call",
                                    f"update_job: {result[:120]}", {"job_id": job_id})
                 return result
-            elif name == "update_client_notes":
-                result = await self._update_client_notes(tool_input["client_id"], tool_input["notes"])
+            elif name == "update_client":
+                client_id = tool_input.pop("client_id")
+                result = await self._update_client(client_id, **tool_input)
                 await log_activity(session, "web", self.workspace.value, "tool_call",
-                                   f"update_client_notes: client {tool_input['client_id'][:8]}…")
+                                   f"update_client: {result[:120]}")
                 return result
             elif name == "create_client":
                 result = await self._create_client(**tool_input)
@@ -2025,6 +2099,11 @@ class BusinessAgent(DeskAgent):
                 )
             elif name == "log_po_issue":
                 return await self._log_po_issue(tool_input["po_id"], tool_input["issue_text"])
+            elif name == "delete_purchase_order":
+                result = await self._delete_purchase_order(tool_input["po_id"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"delete_purchase_order: {tool_input.get('po_id', '')[:20]}")
+                return result
             elif name == "get_stock_levels":
                 return await self._get_stock_levels(
                     tool_input.get("low_only", False), tool_input.get("category")
