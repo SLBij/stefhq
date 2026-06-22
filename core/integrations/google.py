@@ -226,6 +226,7 @@ async def calendar_list_events(access_token: str, days_ahead: int = 7) -> list[d
         start = item.get("start", {})
         end = item.get("end", {})
         events.append({
+            "id": item.get("id"),
             "title": item.get("summary", "(no title)"),
             "start": start.get("dateTime") or start.get("date"),
             "end": end.get("dateTime") or end.get("date"),
@@ -233,3 +234,56 @@ async def calendar_list_events(access_token: str, days_ahead: int = 7) -> list[d
             "location": item.get("location", ""),
         })
     return events
+
+
+async def calendar_get_event(access_token: str, event_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{_CALENDAR_BASE}/{event_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if not resp.is_success:
+            raise ValueError(f"Calendar get {resp.status_code}: {resp.text}")
+        item = resp.json()
+    start = item.get("start", {})
+    end = item.get("end", {})
+    return {
+        "id": item["id"],
+        "title": item.get("summary", "(no title)"),
+        "start": start.get("dateTime") or start.get("date"),
+        "end": end.get("dateTime") or end.get("date"),
+        "description": item.get("description", ""),
+        "location": item.get("location", ""),
+    }
+
+
+async def calendar_update_event(
+    access_token: str,
+    event_id: str,
+    title: str | None = None,
+    start_datetime: str | None = None,
+    end_datetime: str | None = None,
+    description: str | None = None,
+    location: str | None = None,
+) -> dict:
+    patch: dict = {}
+    if title is not None:
+        patch["summary"] = title
+    if start_datetime is not None:
+        patch["start"] = {"dateTime": start_datetime, "timeZone": "Africa/Johannesburg"}
+    if end_datetime is not None:
+        patch["end"] = {"dateTime": end_datetime, "timeZone": "Africa/Johannesburg"}
+    if description is not None:
+        patch["description"] = description
+    if location is not None:
+        patch["location"] = location
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.patch(
+            f"{_CALENDAR_BASE}/{event_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=patch,
+        )
+        if not resp.is_success:
+            raise ValueError(f"Calendar update {resp.status_code}: {resp.text}")
+        data = resp.json()
+    return {"event_id": data["id"], "html_link": data.get("htmlLink", "")}

@@ -69,9 +69,8 @@ async def headspace_chat(
         conversation=conversation,
         entities=routing.entities,
     )
-    from datetime import datetime, timezone, timedelta
-    _SAST = timezone(timedelta(hours=2))
-    context["current_datetime"] = datetime.now(_SAST).strftime("%A, %d %B %Y at %H:%M SAST")
+    from services.datetime_context import format_current_datetime
+    context["current_datetime"] = format_current_datetime()
 
     attachments = [{"type": a.type, "media_type": a.media_type, "data": a.data} for a in body.images] or None
 

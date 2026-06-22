@@ -68,9 +68,8 @@ async def pip_chat(
         conversation=conversation,
         entities=[],
     )
-    from datetime import datetime, timedelta, timezone
-    _SAST = timezone(timedelta(hours=2))
-    context["current_datetime"] = datetime.now(_SAST).strftime("%A, %d %B %Y at %H:%M SAST")
+    from services.datetime_context import format_current_datetime
+    context["current_datetime"] = format_current_datetime()
     context["user_id"] = user.id
 
     attachments = [{"type": a.type, "media_type": a.media_type, "data": a.data} for a in body.images] or None

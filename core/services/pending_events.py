@@ -37,3 +37,11 @@ async def store_pending_email(details: dict) -> str:
 
 async def pop_pending_email(pending_id: str) -> dict | None:
     return await _pop("pending_email:", pending_id)
+
+
+async def store_pending_event_update(details: dict) -> str:
+    return await _store("pending_event_update:", details)
+
+
+async def pop_pending_event_update(pending_id: str) -> dict | None:
+    return await _pop("pending_event_update:", pending_id)

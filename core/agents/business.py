@@ -12,7 +12,9 @@ from agents.router import Workspace
 from config import settings
 from integrations.google import (
     calendar_create_event,
+    calendar_get_event,
     calendar_list_events,
+    calendar_update_event,
     get_access_token,
     gmail_create_draft,
     gmail_get_message,
@@ -25,8 +27,10 @@ from services.agent_naming import AGENT_NAME_TOOL, agent_name_prompt, save_agent
 from services.pending_events import (
     pop_pending_email,
     pop_pending_event,
+    pop_pending_event_update,
     store_pending_email,
     store_pending_event,
+    store_pending_event_update,
 )
 from services.streaming import ServerSentEvent, error_event, status_event, token_event
 
@@ -44,14 +48,17 @@ Tools:
 - list_active_jobs: see what's currently active (useful for morning briefings, scheduling)
 - log_communication: record a call or message against a job
 - create_task: add a follow-up task to Inbox — use this instead of saying "switch to Inbox"
-- update_job: update production status, job notes, install date, or job status — requires job_id from get_client_jobs
+- update_job: update production status, job notes, install date, job status, or payment received status/amount/date — requires job_id from get_client_jobs
 - update_client_notes: update notes on a client record — requires client_id from search_clients
 - create_client: add a new client to the CRM — always search first to avoid duplicates
 - create_job: add a new job for an existing client — ALWAYS summarise details and get explicit confirmation before calling
 - compose_email: draft an email and save it to Gmail Drafts — show the full draft, then tell Stef to open Gmail to review and send. Do NOT offer to send programmatically.
 - propose_calendar_event: propose an install/site visit event — ALWAYS show full details and wait for confirmation before calling confirm_calendar_event
 - confirm_calendar_event: create a proposed event in Google Calendar — ONLY call after Stef explicitly confirms
-- list_upcoming_events: check Google Calendar for upcoming events (scheduling, availability)
+- list_upcoming_events: check Google Calendar for upcoming events (scheduling, availability) — returns each event's id, needed for updates and deletion flags
+- propose_calendar_event_update: propose a change (time, title, location, notes) to an existing event — ALWAYS show the before/after and wait for confirmation before calling confirm_calendar_event_update
+- confirm_calendar_event_update: apply a previously proposed event change — ONLY call after Stef explicitly confirms
+- flag_event_for_deletion: prefix an event's title with "[DELETE]" so Stef can remove it herself — Pip never deletes calendar events directly
 - list_emails: check the inbox — list recent emails with From/Subject/Date/snippet. Useful for "any new emails?", "what's in the inbox?", checking for replies
 - read_email: read the full body of a specific email by ID (from list_emails)
 - list_suppliers / get_supplier: supplier contact details, account numbers, and order email templates
@@ -88,14 +95,35 @@ For jobs, echo back all measurements and product details — a wrong measurement
 NEVER call create_job without measurements (width + drop). If missing, ask before doing anything else — \
 Stef may be on site and can still measure; once she leaves, those numbers are gone.
 
+IMPORTANT for payments: part_payment_amount is the EXPECTED deposit, calculated from the invoice — it is \
+NOT what was actually paid. part_payment_received_amount and final_payment_received_amount are the ACTUAL \
+amounts received, and can differ from the expected figure (client paid more/less, rounded, etc). When Stef \
+shares a proof-of-payment screenshot: read the amount and date off it, confirm back to her ("Got it — R4500 \
+received on 22 June — mark as part payment?"), then call update_job with the matching received boolean + \
+amount + date together in one call. If the job is still status='quoting' when a part payment comes in, also \
+set status='active' in the same call.
+
 IMPORTANT for email/calendar tools:
 - For compose_email: write professional, concise business emails. After calling compose_email, display \
 the FULL draft clearly (To, Subject, Body) and tell Stef to open Gmail Drafts to add any attachments \
 and send. NEVER offer to send programmatically — sending is always manual for now.
 - For propose_calendar_event: display the full event details (title, date/time, location, notes) and \
 say "Reply 'add it' to confirm." NEVER call confirm_calendar_event without explicit confirmation.
+- For propose_calendar_event_update: call list_upcoming_events first if you don't already have the event_id. \
+Display what's changing (before → after) and wait for explicit confirmation before calling confirm_calendar_event_update. \
+Only pass the fields that are actually changing.
+- For flag_event_for_deletion: Pip can never delete a calendar event outright. If an event looks cancelled, \
+duplicated, or no longer needed, call flag_event_for_deletion to prefix its title with "[DELETE]" and tell \
+Stef it's flagged — she removes it herself from Google Calendar. Still worth a quick confirmation in chat \
+first ("flag the 3pm Tuesday slot for deletion?") since it's easy to mention the wrong event.
 - Customer email addresses go in the event description/notes, NOT as attendees. Stef will add them \
 manually once she's verified the event is correct.
+- Events titled "BLOCKED — consult slot" (or any bare "Booked"/"Blocked" title with no client name) are \
+placeholder blockers Stef uses to hide specific times from the public consult-booking page — they are \
+NEVER tied to a specific client or job, even if mentioned in the same message as one. Don't try to match \
+them to a client or ask whose appointment it is. They're low-stakes and freely movable/deletable — moving \
+one just nudges which slot looks open to clients, it isn't rescheduling anything real. When asked to add a \
+new one, always use the exact title "BLOCKED — consult slot".
 - All times are SAST (UTC+2, Africa/Johannesburg). Use ISO 8601 with +02:00 offset.
 - After sending email, call log_communication to record it against the job (type: "email").
 
@@ -186,7 +214,7 @@ _TOOLS = [
     },
     {
         "name": "update_job",
-        "description": "Update a job's production status, production checkboxes, notes, dates, delay note, or overall status. Requires job_id from get_client_jobs.",
+        "description": "Update a job's production status, production checkboxes, payment received status/amount/date, notes, dates, delay note, or overall status. Requires job_id from get_client_jobs.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -200,7 +228,12 @@ _TOOLS = [
                 "rails_received": {"type": "boolean", "description": "Mark rails as received"},
                 "blinds_received": {"type": "boolean", "description": "Mark blinds as received"},
                 "sewing_complete": {"type": "boolean", "description": "Mark sewing as complete"},
+                "part_payment_received": {"type": "boolean", "description": "Mark part/deposit payment received"},
+                "part_payment_received_amount": {"type": "number", "description": "ACTUAL amount received for the part payment, e.g. from a proof of payment — may differ from the invoiced deposit"},
+                "part_payment_date": {"type": "string", "description": "ISO 8601 date the part payment was received, e.g. 2026-06-20"},
                 "final_payment_received": {"type": "boolean", "description": "Mark final payment received — also set status='complete' to close the job"},
+                "final_payment_received_amount": {"type": "number", "description": "ACTUAL amount received for the final payment, e.g. from a proof of payment — may differ from the calculated balance"},
+                "final_payment_date": {"type": "string", "description": "ISO 8601 date the final payment was received, e.g. 2026-06-20"},
                 "delay_note": {"type": "string", "description": "Delay message shown to client on their order status page. Pass empty string \"\" to clear it. Example: 'Fabric on backorder, estimated delay 1 week'."},
                 "status": {
                     "type": "string",
@@ -332,12 +365,65 @@ _TOOLS = [
     },
     {
         "name": "list_upcoming_events",
-        "description": "List upcoming Google Calendar events to check schedule or availability before proposing a time.",
+        "description": (
+            "List upcoming Google Calendar events to check schedule or availability before proposing a time. "
+            "Each event includes its id — needed for propose_calendar_event_update and flag_event_for_deletion."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "days_ahead": {"type": "integer", "description": "How many days ahead to look (default 7, max 30)"},
             },
+        },
+    },
+    {
+        "name": "propose_calendar_event_update",
+        "description": (
+            "Propose a change to an existing Google Calendar event — time, title, location, or notes. "
+            "Requires event_id from list_upcoming_events. Only include the fields that are actually changing. "
+            "Returns a pending_id and a before/after preview. "
+            "ALWAYS display the before/after and wait for explicit confirmation before calling confirm_calendar_event_update."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "description": "Event ID from list_upcoming_events"},
+                "title": {"type": "string", "description": "New title, if changing"},
+                "start_datetime": {"type": "string", "description": "New start, ISO 8601 in SAST, if changing"},
+                "end_datetime": {"type": "string", "description": "New end, ISO 8601 in SAST, if changing"},
+                "description": {"type": "string", "description": "New notes, if changing"},
+                "location": {"type": "string", "description": "New location, if changing"},
+            },
+            "required": ["event_id"],
+        },
+    },
+    {
+        "name": "confirm_calendar_event_update",
+        "description": (
+            "Apply a previously proposed calendar event update. "
+            "ONLY call after Stef has explicitly confirmed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pending_id": {"type": "string", "description": "Pending update ID from propose_calendar_event_update"},
+            },
+            "required": ["pending_id"],
+        },
+    },
+    {
+        "name": "flag_event_for_deletion",
+        "description": (
+            "Prefix a calendar event's title with '[DELETE]' to flag it for manual removal. "
+            "Does NOT delete the event — Stef removes it herself from Google Calendar once flagged. "
+            "Use when an event looks cancelled, duplicated, or no longer needed. Requires event_id from list_upcoming_events."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "description": "Event ID from list_upcoming_events"},
+            },
+            "required": ["event_id"],
         },
     },
     {
@@ -660,7 +746,7 @@ class BusinessAgent(DeskAgent):
         if job.get("final_payment_received"):
             return "paid"
         if job.get("part_payment_received"):
-            amount = job.get("part_payment_amount")
+            amount = job.get("part_payment_received_amount") or job.get("part_payment_amount")
             return f"part paid (R{float(amount):.0f})" if amount else "part paid"
         if job.get("invoice_number") and not job.get("invoice_sent_at"):
             return "invoice not sent"
@@ -677,7 +763,7 @@ class BusinessAgent(DeskAgent):
                 headers=self._headers(),
                 params={
                     "client_id": f"eq.{client_id}",
-                    "select": "id,quote_ref,status,production_status,fabrics_received,rails_received,blinds_received,sewing_complete,delay_note,install_date,invoice_total,invoice_date,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_date,final_payment_received,quote_accepted_by,notes,communications,created_at",
+                    "select": "id,quote_ref,status,production_status,fabrics_received,rails_received,blinds_received,sewing_complete,delay_note,install_date,invoice_total,invoice_date,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_received_amount,part_payment_date,final_payment_received,final_payment_received_amount,final_payment_date,quote_accepted_by,notes,communications,created_at",
                     "order": "created_at.desc",
                 },
             )
@@ -698,7 +784,7 @@ class BusinessAgent(DeskAgent):
                 headers=self._headers(),
                 params={
                     "status": "eq.active",
-                    "select": "id,quote_ref,client_name,production_status,install_date,invoice_total,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,final_payment_received,quote_accepted_by,required_date,notes",
+                    "select": "id,quote_ref,client_name,production_status,install_date,invoice_total,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_received_amount,final_payment_received,final_payment_received_amount,quote_accepted_by,required_date,notes",
                     "order": "install_date.asc.nullslast",
                     "limit": "50",
                 },
@@ -739,8 +825,12 @@ class BusinessAgent(DeskAgent):
 
     async def _update_job(self, job_id: str, **kwargs) -> str:
         payload = {}
-        date_fields = {"install_date", "required_date"}
-        bool_fields = {"fabrics_received", "rails_received", "blinds_received", "sewing_complete", "final_payment_received"}
+        date_fields = {"install_date", "required_date", "part_payment_date", "final_payment_date"}
+        bool_fields = {
+            "fabrics_received", "rails_received", "blinds_received", "sewing_complete",
+            "part_payment_received", "final_payment_received",
+        }
+        amount_fields = {"part_payment_received_amount", "final_payment_received_amount"}
         for key, val in kwargs.items():
             if val is None:
                 continue
@@ -752,6 +842,11 @@ class BusinessAgent(DeskAgent):
                     return f"Invalid date format for {key}: '{val}' — use YYYY-MM-DD."
             elif key in bool_fields:
                 payload[key] = bool(val)
+            elif key in amount_fields:
+                try:
+                    payload[key] = float(val)
+                except (TypeError, ValueError):
+                    return f"Invalid amount for {key}: '{val}' — use a number, e.g. 4500.00."
             else:
                 payload[key] = val
         if not payload:
@@ -944,6 +1039,76 @@ class BusinessAgent(DeskAgent):
         if not events:
             return f"No events in the next {days_ahead} days."
         return json.dumps(events)
+
+    async def _propose_calendar_event_update(
+        self,
+        user_id: uuid.UUID,
+        session: AsyncSession,
+        event_id: str,
+        title: str | None = None,
+        start_datetime: str | None = None,
+        end_datetime: str | None = None,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> str:
+        changes = {
+            "title": title,
+            "start_datetime": start_datetime,
+            "end_datetime": end_datetime,
+            "description": description,
+            "location": location,
+        }
+        if not any(v is not None for v in changes.values()):
+            return "No changes provided — specify at least one field to update."
+        access_token = await get_access_token(user_id, session)
+        current = await calendar_get_event(access_token, event_id)
+        pending_id = await store_pending_event_update({"event_id": event_id, **changes})
+        lines = [f"pending_id: {pending_id}", "", f"**Event:** {current['title']}"]
+        if title is not None and title != current["title"]:
+            lines.append(f"**Title:** {current['title']} → {title}")
+        if start_datetime is not None and start_datetime != current["start"]:
+            lines.append(f"**Start:** {current['start']} → {start_datetime}")
+        if end_datetime is not None and end_datetime != current["end"]:
+            lines.append(f"**End:** {current['end']} → {end_datetime}")
+        if location is not None and location != current["location"]:
+            lines.append(f"**Location:** {current['location'] or '(none)'} → {location}")
+        if description is not None and description != current["description"]:
+            lines.append(f"**Notes:** {current['description'] or '(none)'} → {description}")
+        return "\n".join(lines)
+
+    async def _confirm_calendar_event_update(
+        self, user_id: uuid.UUID, session: AsyncSession, pending_id: str
+    ) -> str:
+        details = await pop_pending_event_update(pending_id)
+        if details is None:
+            return "Pending update not found — it may have expired (24h limit). Please propose it again."
+        access_token = await get_access_token(user_id, session)
+        result = await calendar_update_event(
+            access_token,
+            event_id=details["event_id"],
+            title=details.get("title"),
+            start_datetime=details.get("start_datetime"),
+            end_datetime=details.get("end_datetime"),
+            description=details.get("description"),
+            location=details.get("location"),
+        )
+        link = result.get("html_link", "")
+        return f"Event updated.\n{link}"
+
+    _DELETE_FLAG = "[DELETE] "
+
+    async def _flag_event_for_deletion(
+        self, user_id: uuid.UUID, session: AsyncSession, event_id: str
+    ) -> str:
+        access_token = await get_access_token(user_id, session)
+        current = await calendar_get_event(access_token, event_id)
+        title = current["title"]
+        if title.startswith(self._DELETE_FLAG):
+            return f"Already flagged: {title}"
+        new_title = f"{self._DELETE_FLAG}{title}"
+        result = await calendar_update_event(access_token, event_id, title=new_title)
+        link = result.get("html_link", "")
+        return f"Flagged for deletion: {new_title}\n{link}\n\nRemove it from Google Calendar whenever you're ready."
 
     async def _list_emails(
         self, user_id: uuid.UUID, session: AsyncSession,
@@ -1332,7 +1497,7 @@ class BusinessAgent(DeskAgent):
                     "status": "neq.archived",
                     "invoice_number": "not.is.null",
                     "or": "(final_payment_received.is.false,final_payment_received.is.null)",
-                    "select": "id,client_name,quote_ref,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,final_payment_received,status",
+                    "select": "id,client_name,quote_ref,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_received_amount,final_payment_received,final_payment_received_amount,status",
                     "order": "invoice_sent_at.asc.nullslast",
                     "limit": "50",
                 },
@@ -1398,7 +1563,7 @@ class BusinessAgent(DeskAgent):
         async with httpx.AsyncClient(timeout=10) as client:
             rj = await client.get(
                 f"{self._base()}/jobs", headers=self._headers(),
-                params={"id": f"eq.{job_id}", "select": "id,client_id,client_name,quote_ref,status,production_status,install_date,required_date,invoice_total,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,final_payment_received,quote_accepted_by,notes,delay_note,share_token,quote_expires_at", "limit": "1"},
+                params={"id": f"eq.{job_id}", "select": "id,client_id,client_name,quote_ref,status,production_status,install_date,required_date,invoice_total,invoice_number,invoice_sent_at,part_payment_received,part_payment_amount,part_payment_received_amount,final_payment_received,final_payment_received_amount,quote_accepted_by,notes,delay_note,share_token,quote_expires_at", "limit": "1"},
             )
             rj.raise_for_status()
             rows = rj.json()
@@ -1427,6 +1592,7 @@ class BusinessAgent(DeskAgent):
         install_date = job.get("install_date")
         invoice_total = job.get("invoice_total")
         part_amount = job.get("part_payment_amount")
+        part_received_amount = job.get("part_payment_received_amount")
         production_status = (job.get("production_status") or "in progress").replace("_", " ")
         delay_reason = extra_context or job.get("delay_note") or ""
 
@@ -1450,6 +1616,13 @@ class BusinessAgent(DeskAgent):
             part_str = fmt_amount(part_amount or (float(invoice_total) * 0.8 if invoice_total else None))
         except (TypeError, ValueError):
             part_str = "the deposit amount"
+        if job.get("part_payment_received") and part_received_amount is not None and invoice_total is not None:
+            try:
+                balance_str = fmt_amount(float(invoice_total) - float(part_received_amount))
+            except (TypeError, ValueError):
+                balance_str = total_str
+        else:
+            balance_str = total_str
         install_str = install_date or "to be confirmed"
         extra = extra_context or ""
 
@@ -1533,7 +1706,7 @@ class BusinessAgent(DeskAgent):
                 (
                     f"Hi {first_name},\n\n"
                     f"Thank you — your installation is now complete.\n\n"
-                    f"The final balance of {total_str} is now due. Please transfer to:\n\n"
+                    f"The final balance of {balance_str} is now due. Please transfer to:\n\n"
                     f"{bank_block}\n\n"
                     f"Please use your invoice number as reference and send proof of payment via WhatsApp or email once done."
                     + (f"\n\nYou can view your invoice here:\n{shared_url}" if shared_url else f"\n\n{no_link_note}")
@@ -1707,6 +1880,7 @@ class BusinessAgent(DeskAgent):
         "create_task", "update_job", "update_client_notes", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
         "propose_calendar_event", "confirm_calendar_event", "schedule_reminder", "cancel_reminder",
+        "propose_calendar_event_update", "confirm_calendar_event_update", "flag_event_for_deletion",
         "draft_supplier_order_email", "draft_client_update_email", "create_purchase_order", "add_po_items",
         "update_po_status", "log_po_issue", "append_note", "write_notes",
     }
@@ -1785,6 +1959,27 @@ class BusinessAgent(DeskAgent):
                 return await self._list_upcoming_events(
                     user_id, session, tool_input.get("days_ahead", 7)
                 )
+            elif name == "propose_calendar_event_update":
+                if not user_id:
+                    return "Cannot propose update: user context missing."
+                result = await self._propose_calendar_event_update(user_id, session, **tool_input)
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"propose_event_update: {tool_input.get('event_id', '')[:20]}")
+                return result
+            elif name == "confirm_calendar_event_update":
+                if not user_id:
+                    return "Cannot update calendar event: user context missing."
+                result = await self._confirm_calendar_event_update(user_id, session, tool_input["pending_id"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"confirm_event_update: {result[:120]}")
+                return result
+            elif name == "flag_event_for_deletion":
+                if not user_id:
+                    return "Cannot flag event: user context missing."
+                result = await self._flag_event_for_deletion(user_id, session, tool_input["event_id"])
+                await log_activity(session, "web", self.workspace.value, "tool_call",
+                                   f"flag_event_for_deletion: {tool_input.get('event_id', '')[:20]}")
+                return result
             elif name == "list_suppliers":
                 return await self._list_suppliers()
             elif name == "get_supplier":
@@ -1881,7 +2076,7 @@ class BusinessAgent(DeskAgent):
         user_id: uuid.UUID | None = context.get("user_id")
         memory_context = "\n".join(f"- {m['content']}" for m in context.get("memories", []))
         current_dt = context.get("current_datetime", "")
-        system = f"Current date and time: {current_dt}\n\n" + self.system_prompt if current_dt else self.system_prompt
+        system = f"{current_dt}\n\n" + self.system_prompt if current_dt else self.system_prompt
         if memory_context:
             system += f"\n\nRelevant context from memory:\n{memory_context}"
 
@@ -1908,7 +2103,7 @@ class BusinessAgent(DeskAgent):
                     if block.type == "tool_use":
                         _status = "Sending email…" if block.name in ("send_email", "compose_email", "draft_supplier_order_email", "draft_client_update_email") \
                             else "Checking inbox…" if block.name in ("list_emails", "read_email") \
-                            else "Updating calendar…" if block.name in ("confirm_calendar_event", "propose_calendar_event", "list_upcoming_events") \
+                            else "Updating calendar…" if block.name in ("confirm_calendar_event", "propose_calendar_event", "list_upcoming_events", "propose_calendar_event_update", "confirm_calendar_event_update", "flag_event_for_deletion") \
                             else "Setting reminder…" if block.name == "schedule_reminder" \
                             else "Checking suppliers…" if block.name in ("list_suppliers", "get_supplier") \
                             else "Checking orders…" if block.name in ("list_purchase_orders", "get_purchase_order", "get_jobs_awaiting_stock") \
