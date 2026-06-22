@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { getConversations, getReviewQueue } from '$lib/api';
+	import { getAgentName, getConversations, getReviewQueue } from '$lib/api';
 	import { auth, clearToken, isAuthenticated } from '$lib/auth.svelte';
 	import { historyRefresh } from '$lib/historyRefresh.svelte';
 	import { reviewRefresh } from '$lib/reviewRefresh.svelte';
@@ -11,9 +11,21 @@
 	let reviewCount = $state(0);
 	let conversations = $state<ConversationSummary[]>([]);
 	let historyExpanded = $state(false);
+	let agentNames = $state<Record<string, string | null>>({});
 
 	$effect(() => {
 		if (!isAuthenticated()) goto('/login');
+	});
+
+	// Fetch each workspace's agent name once, so the nav can show "Ember @ Hive Mind"
+	$effect(() => {
+		const token = auth.token;
+		if (!token) return;
+		Promise.all(
+			WORKSPACES.map((ws) => getAgentName(token, ws.id).then((name) => [ws.id, name] as const))
+		).then((entries) => {
+			agentNames = Object.fromEntries(entries);
+		});
 	});
 
 	$effect(() => {
@@ -83,7 +95,9 @@
 					style:color={active ? ws.color : 'var(--color-text-muted)'}
 				>
 					<span class="text-base">{ws.icon}</span>
-					<span class="font-medium">{ws.label}</span>
+					<span class="font-medium">
+						{agentNames[ws.id] ? `${agentNames[ws.id]} @ ${ws.label}` : ws.label}
+					</span>
 				</a>
 			{/each}
 		</nav>
