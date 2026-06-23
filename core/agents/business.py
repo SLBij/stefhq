@@ -83,6 +83,15 @@ Tools:
 - pause_briefing: pause Pip's morning briefing until a date (inclusive) — use when Stef says she's on leave or away
 - resume_briefing: immediately cancel a briefing pause
 - add_email_noise_filter / remove_email_noise_filter / list_email_noise_filters: manage what the midday email digest treats as noise (recurring senders/topics Stef doesn't want flagged)
+- send_whatsapp_message: send a WhatsApp text message directly to a client's phone number — use for follow-ups, confirmations, or replying to escalations Stef has asked you to handle
+- escalate_to_stef: forward a client WhatsApp message to Stef's Telegram when you can't handle it — include the client name, phone, what they asked, and any relevant job context
+
+WhatsApp channel behaviour:
+- Messages prefixed [WhatsApp from {name}] are inbound from a client's WhatsApp — you are speaking TO THE CLIENT, not to Stef. Keep responses professional, friendly, and concise. No markdown formatting (no **, no ##) — plain text only.
+- If a client asks something you can fully answer from CRM data (job status, install date, payment balance, who to contact), answer it directly.
+- If it's outside your scope (complaints about quality, design changes, anything requiring Stef's judgement), call escalate_to_stef — tell the client "Let me check with Stef and get back to you shortly."
+- When Stef replies via Telegram saying "tell [client] X", call send_whatsapp_message with their phone number and the message. Always confirm back to Stef once sent.
+- Log WhatsApp exchanges with log_communication (type: "whatsapp") after handling.
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
 email drafting, calendar management, and day-to-day business decisions. Be practical and direct — Stef \
@@ -762,6 +771,32 @@ _TOOLS = [
         "name": "list_email_noise_filters",
         "description": "List all current noise patterns for the midday email digest.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "send_whatsapp_message",
+        "description": "Send a WhatsApp text message to a client's phone number. Use for follow-ups, confirmations, or relaying Stef's reply to a client escalation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to_phone": {"type": "string", "description": "Client's phone number in international format, e.g. +27821234567"},
+                "message": {"type": "string", "description": "Plain text message to send — no markdown formatting"},
+            },
+            "required": ["to_phone", "message"],
+        },
+    },
+    {
+        "name": "escalate_to_stef",
+        "description": "Forward an inbound WhatsApp message to Stef on Telegram when it's outside Pip's scope. Sends a notification with full context so Stef can reply.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string", "description": "Client's name (or 'Unknown' if not in CRM)"},
+                "client_phone": {"type": "string", "description": "Client's phone number"},
+                "their_message": {"type": "string", "description": "What the client said"},
+                "context": {"type": "string", "description": "Relevant job/CRM context Stef should know (status, outstanding balance, last communication, etc.)"},
+            },
+            "required": ["client_name", "client_phone", "their_message", "context"],
+        },
     },
 ]
 
@@ -1994,6 +2029,18 @@ class BusinessAgent(DeskAgent):
         await session.commit()
         return "Notes updated."
 
+    async def _send_whatsapp_message(self, to_phone: str, message: str) -> str:
+        from services.whatsapp import send_whatsapp_text
+        ok = await send_whatsapp_text(to_phone, message)
+        return "Sent." if ok else "Failed to send — check WhatsApp credentials."
+
+    async def _escalate_to_stef(
+        self, client_name: str, client_phone: str, their_message: str, context: str
+    ) -> str:
+        from services.whatsapp import notify_stef_escalation
+        ok = await notify_stef_escalation(client_name, client_phone, their_message, context)
+        return "Escalated to Stef on Telegram." if ok else "Failed to send escalation."
+
     _WRITE_TOOLS = {
         "create_task", "update_job", "update_client", "log_communication",
         "create_client", "create_job", "compose_email", "send_email",
@@ -2002,6 +2049,7 @@ class BusinessAgent(DeskAgent):
         "draft_supplier_order_email", "draft_client_update_email", "create_purchase_order", "add_po_items",
         "update_po_status", "log_po_issue", "delete_purchase_order", "append_note", "write_notes",
         "add_email_noise_filter", "remove_email_noise_filter",
+        "send_whatsapp_message", "escalate_to_stef",
     }
 
     async def _execute_tool(
@@ -2187,6 +2235,13 @@ class BusinessAgent(DeskAgent):
                 return await self._remove_email_noise_filter(tool_input["pattern"])
             elif name == "list_email_noise_filters":
                 return await self._list_email_noise_filters()
+            elif name == "send_whatsapp_message":
+                return await self._send_whatsapp_message(tool_input["to_phone"], tool_input["message"])
+            elif name == "escalate_to_stef":
+                return await self._escalate_to_stef(
+                    tool_input["client_name"], tool_input["client_phone"],
+                    tool_input["their_message"], tool_input["context"],
+                )
             elif name == "read_notes":
                 return await self._read_notes(session)
             elif name == "append_note":
@@ -2243,6 +2298,8 @@ class BusinessAgent(DeskAgent):
                             else "Checking stock…" if block.name in ("get_stock_levels", "get_product") \
                             else "Reading notes…" if block.name == "read_notes" \
                             else "Updating notes…" if block.name in ("append_note", "write_notes") \
+                            else "Sending WhatsApp…" if block.name == "send_whatsapp_message" \
+                            else "Escalating to Stef…" if block.name == "escalate_to_stef" \
                             else "Checking CRM…"
                         yield status_event(_status)
                         result = await self._execute_tool(block.name, dict(block.input), session, user_id)

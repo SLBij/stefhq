@@ -10,6 +10,7 @@ from api.conversations import router as conversations_router
 from api.google_auth import router as google_auth_router
 from api.headspace import router as headspace_router
 from api.pip import router as pip_router
+from api.whatsapp import router as whatsapp_router
 from api.memory import router as memory_router
 from api.notes import router as notes_router
 from api.tasks import router as tasks_router
@@ -45,6 +46,7 @@ app.include_router(pip_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(notes_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
+app.include_router(whatsapp_router, prefix="/api")
 
 
 @app.get("/health")

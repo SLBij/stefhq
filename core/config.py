@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     curtains_supabase_url: str = "https://sddickbinhposlkatmwi.supabase.co"
     curtains_supabase_key: str = ""
 
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_verify_token: str = ""
+
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "https://api.stefhq.io/api/oauth/google/callback"
