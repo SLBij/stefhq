@@ -28,8 +28,9 @@ async def send_whatsapp_text(to_phone: str, message: str) -> bool:
 async def notify_stef_escalation(
     client_name: str, client_phone: str, their_message: str, context: str
 ) -> bool:
-    """Forward an unhandled client WhatsApp message to Stef's Telegram via the Pip bot."""
-    if not settings.pip_bot_token or not settings.telegram_chat_id:
+    """Forward an unhandled client WhatsApp message to Stef's Telegram via the Pip bot (falls back to Ember bot)."""
+    bot_token = settings.pip_bot_token or settings.telegram_bot_token
+    if not bot_token or not settings.telegram_chat_id:
         return False
     text = (
         f"📱 *WhatsApp escalation*\n"
@@ -40,7 +41,7 @@ async def notify_stef_escalation(
     )
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
-            f"https://api.telegram.org/bot{settings.pip_bot_token}/sendMessage",
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
             json={
                 "chat_id": settings.telegram_chat_id,
                 "text": text,
