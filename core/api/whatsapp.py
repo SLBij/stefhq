@@ -143,7 +143,13 @@ async def process_stef_instruction(client_phone: str, client_name: str, instruct
             session.add(conversation)
             await session.flush()
 
-        prefixed = f"[Stef instruction for {client_name} | phone: {client_phone}]\n{instruction}"
+        display = client_name if client_name and client_name.lower() != "unknown" else client_phone
+        prefixed = (
+            f"[Stef instruction | WhatsApp phone: {client_phone} | client: {display}]\n"
+            f"Stef says: {instruction}\n"
+            f"Craft a natural WhatsApp reply based on Stef's instruction and send it to {client_phone} "
+            f"using send_whatsapp_message. Do not ask for more details. Do not escalate."
+        )
         session.add(Message(conversation_id=conversation.id, role="user", content=prefixed))
         await session.flush()
 
