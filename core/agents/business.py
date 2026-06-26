@@ -2088,7 +2088,13 @@ class BusinessAgent(DeskAgent):
         self, client_name: str, client_phone: str, their_message: str, context: str
     ) -> str:
         from services.whatsapp import notify_stef_escalation
-        ok = await notify_stef_escalation(client_name, client_phone, their_message, context)
+        ok, msg_id = await notify_stef_escalation(client_name, client_phone, their_message, context)
+        if ok and msg_id and client_phone:
+            from redis.asyncio import from_url as redis_from_url
+            from config import settings as _s
+            r = await redis_from_url(_s.redis_url)
+            await r.setex(f"pip:escalation:{msg_id}", 604800, client_phone)
+            await r.aclose()
         return "Escalated to Stef on Telegram." if ok else "Failed to send escalation."
 
     _WRITE_TOOLS = {

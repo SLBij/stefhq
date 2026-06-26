@@ -27,11 +27,14 @@ async def send_whatsapp_text(to_phone: str, message: str) -> bool:
 
 async def notify_stef_escalation(
     client_name: str, client_phone: str, their_message: str, context: str
-) -> bool:
-    """Forward an unhandled client WhatsApp message to Stef's Telegram via the Pip bot (falls back to Ember bot)."""
+) -> tuple[bool, int | None]:
+    """Forward an unhandled client WhatsApp message to Stef's Telegram via the Pip bot (falls back to Ember bot).
+
+    Returns (success, telegram_message_id) so the caller can store a relay mapping.
+    """
     bot_token = settings.pip_bot_token or settings.telegram_bot_token
     if not bot_token or not settings.telegram_chat_id:
-        return False
+        return False, None
     text = (
         f"📱 *WhatsApp escalation*\n"
         f"*From:* {client_name} (`{client_phone}`)\n\n"
@@ -48,4 +51,7 @@ async def notify_stef_escalation(
                 "parse_mode": "Markdown",
             },
         )
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            msg_id = resp.json().get("result", {}).get("message_id")
+            return True, msg_id
+        return False, None

@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from api.memory import router as memory_router
 from api.notes import router as notes_router
 from api.tasks import router as tasks_router
 from database import init_db
+from services.pip_relay import run_pip_relay
 from workers.arq_pool import close_pool, get_pool
 
 
@@ -22,7 +24,9 @@ from workers.arq_pool import close_pool, get_pool
 async def lifespan(app: FastAPI):
     await init_db()
     await get_pool()
+    relay_task = asyncio.create_task(run_pip_relay())
     yield
+    relay_task.cancel()
     await close_pool()
 
 
