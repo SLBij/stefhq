@@ -127,6 +127,50 @@ async def receive_message(request: Request):
     return {"status": "ok"}
 
 
+async def process_stef_instruction(client_phone: str, client_name: str, instruction: str) -> bool:
+    """Route Stef's Telegram reply through Pip so it's crafted into a proper WhatsApp message."""
+    async with async_session_factory() as session:
+        conv_title = f"📱 WhatsApp: {client_phone}"
+        result = await session.execute(
+            sa.select(Conversation)
+            .where(Conversation.workspace == "business", Conversation.title == conv_title)
+            .order_by(Conversation.updated_at.desc())
+            .limit(1)
+        )
+        conversation = result.scalar_one_or_none()
+        if not conversation:
+            conversation = Conversation(workspace="business", title=conv_title)
+            session.add(conversation)
+            await session.flush()
+
+        prefixed = f"[Stef instruction for {client_name} | phone: {client_phone}]\n{instruction}"
+        session.add(Message(conversation_id=conversation.id, role="user", content=prefixed))
+        await session.flush()
+
+        context = await assemble_context(
+            session=session,
+            message=instruction,
+            workspace=Workspace.BUSINESS,
+            conversation=conversation,
+            entities=[client_name],
+        )
+        context["current_datetime"] = format_current_datetime()
+        context["whatsapp_sender_phone"] = client_phone
+
+        uid_result = await session.execute(sa.select(GoogleToken.user_id).limit(1))
+        context["user_id"] = uid_result.scalar_one_or_none()
+
+        full_response = ""
+        async for event in _agent.handle(prefixed, context, session):
+            if event.event == "token":
+                full_response += json.loads(event.data).get("content", "")
+
+        session.add(Message(conversation_id=conversation.id, role="assistant", content=full_response))
+        await session.commit()
+
+    return True
+
+
 async def _lookup_client_by_phone(phone: str) -> dict | None:
     """Find a CRM client by phone number — tries exact match then last-9-digits suffix."""
     headers = {

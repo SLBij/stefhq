@@ -1,5 +1,6 @@
-"""Pip bot Telegram relay — polls for Stef's replies to escalation messages and sends them to WhatsApp clients."""
+"""Pip bot Telegram relay — polls for Stef's replies to escalation messages and routes them through Pip."""
 import asyncio
+import json
 import logging
 
 import httpx
@@ -13,7 +14,7 @@ _POLL_TIMEOUT = 30  # seconds for long-polling
 
 
 async def run_pip_relay() -> None:
-    """Long-poll the Pip Telegram bot and relay Stef's replies to WhatsApp clients."""
+    """Long-poll the Pip Telegram bot and relay Stef's replies to WhatsApp clients via Pip."""
     bot_token = settings.pip_bot_token
     if not bot_token:
         logger.info("PIP_BOT_TOKEN not set — relay loop not started")
@@ -72,13 +73,15 @@ async def _handle_update(update: dict, redis, bot_token: str) -> None:
     if not raw:
         return
 
-    client_phone = raw.decode()
+    data = json.loads(raw.decode())
+    client_phone = data["phone"]
+    client_name = data.get("name", "the client")
 
-    from services.whatsapp import send_whatsapp_text
-    sent = await send_whatsapp_text(client_phone, text)
+    # Route through Pip so it crafts a proper client-facing WhatsApp reply
+    from api.whatsapp import process_stef_instruction
+    await process_stef_instruction(client_phone, client_name, text)
 
-    confirm = "✅ Sent to client on WhatsApp." if sent else "❌ Failed to send — check WhatsApp credentials."
-    await _send_telegram_message(bot_token, settings.telegram_chat_id, confirm)
+    await _send_telegram_message(bot_token, settings.telegram_chat_id, f"✅ Pip is replying to {client_name} on WhatsApp.")
 
 
 async def _send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:

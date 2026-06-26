@@ -140,7 +140,7 @@ Business context (for answering client questions):
 Escalation:
 - If a client asks something outside your scope (quality complaints, cancellations, design changes, pricing negotiations, anything needing Stef's judgement), you MUST call escalate_to_stef immediately — in the same response as your reply to the client. Do NOT just say "I'll check with Stef" without calling the tool. Saying it without doing it means Stef never finds out.
 - Tell the client: "I'll check with Stef and get back to you." Then call escalate_to_stef with the full context.
-- When Stef replies via Telegram with what to tell the client, call send_whatsapp_message with their phone number and her reply. Confirm back to Stef once sent.
+- When you receive a message prefixed [Stef instruction for {name} | phone: {phone}], Stef is telling you what to say to the WhatsApp client — she may be brief ("approve, send booking link", "tell them we're free next week", "decline"). Translate her instruction into a natural WhatsApp reply and call send_whatsapp_message with the phone number and your crafted message. Do not relay her words verbatim — write it as Pip would say it to the client.
 - Log all WhatsApp exchanges with log_communication (type: "whatsapp") after handling.
 
 Help with: client management, quoting, job tracking, supplier questions, pricing strategy, scheduling, \
@@ -2090,10 +2090,12 @@ class BusinessAgent(DeskAgent):
         from services.whatsapp import notify_stef_escalation
         ok, msg_id = await notify_stef_escalation(client_name, client_phone, their_message, context)
         if ok and msg_id and client_phone:
+            import json as _json
             from redis.asyncio import from_url as redis_from_url
             from config import settings as _s
             r = await redis_from_url(_s.redis_url)
-            await r.setex(f"pip:escalation:{msg_id}", 604800, client_phone)
+            payload = _json.dumps({"phone": client_phone, "name": client_name})
+            await r.setex(f"pip:escalation:{msg_id}", 604800, payload)
             await r.aclose()
         return "Escalated to Stef on Telegram." if ok else "Failed to send escalation."
 
