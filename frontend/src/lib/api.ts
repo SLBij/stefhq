@@ -147,29 +147,48 @@ export async function reviewMemory(token: string, id: string, action: 'approve' 
 	});
 }
 
-export async function getNotes(token: string): Promise<{ content: string; updated_at: string }> {
+export async function listNotes(token: string): Promise<{ title: string; updated_at: string }[]> {
 	const res = await fetch(`${BASE}/api/notes/`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
-	if (!res.ok) return { content: '', updated_at: '' };
+	if (!res.ok) return [];
 	return res.json();
 }
 
-export async function saveNotes(token: string, content: string): Promise<void> {
-	await fetch(`${BASE}/api/notes/`, {
+export async function getNote(token: string, title: string): Promise<{ title: string; content: string; updated_at: string }> {
+	const res = await fetch(`${BASE}/api/notes/${encodeURIComponent(title)}`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return { title, content: '', updated_at: '' };
+	return res.json();
+}
+
+export async function saveNote(token: string, title: string, content: string): Promise<void> {
+	await fetch(`${BASE}/api/notes/${encodeURIComponent(title)}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
 		body: JSON.stringify({ content }),
 	});
 }
 
-export async function appendNote(token: string, text: string): Promise<void> {
-	await fetch(`${BASE}/api/notes/append`, {
+export async function deleteNote(token: string, title: string): Promise<void> {
+	await fetch(`${BASE}/api/notes/${encodeURIComponent(title)}`, {
+		method: 'DELETE',
+		headers: { Authorization: `Bearer ${token}` },
+	});
+}
+
+export async function appendNote(token: string, text: string, title = 'Notes'): Promise<void> {
+	await fetch(`${BASE}/api/notes/${encodeURIComponent(title)}/append`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
 		body: JSON.stringify({ text }),
 	});
 }
+
+// Legacy aliases kept for any remaining callers
+export const getNotes = (token: string) => getNote(token, 'Notes');
+export const saveNotes = (token: string, content: string) => saveNote(token, 'Notes', content);
 
 export async function getGoogleAuthUrl(token: string): Promise<{ url: string }> {
 	const res = await fetch(`${BASE}/api/oauth/google/authorize`, {

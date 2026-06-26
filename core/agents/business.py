@@ -214,9 +214,12 @@ When creating a PO and you need to know which supplier a fabric or product belon
 with the fabric name — it returns the supplier. Do not ask Stef which supplier to use; look it up first. \
 When building PO items for a job, call get_job_materials first — it returns all fabric quantities, \
 rail codes, and blind specs already measured. Never ask Stef for quantities or codes you can look up. \
-You have access to a shared scratchpad (Notes page): read_notes to read it, append_note to add a \
-timestamped entry safely, write_notes to fully rewrite it. Use this to maintain the dev handoff doc, \
-log bugs you spot, or keep running notes. Always read first before writing to avoid losing content.
+You have access to named notes (Notes page in StefHQ). Each note has a title — omit title for the \
+default 'Notes' scratchpad. Use append_note/read_notes/write_notes with a title param to target specific \
+notes. Always read before write_notes to avoid losing content. Key notes to maintain: \
+'area-confirmations' — log every WhatsApp area decision (suburb, address, outcome, date). \
+When Stef approves or declines an area via the relay, append it immediately. Before classifying a \
+Yellow-zone suburb, read 'area-confirmations' to check if Stef has already ruled on it.
 
 Context about the business:
 - Custom made-to-measure curtains and blinds, Cape Town
@@ -726,27 +729,35 @@ _TOOLS = [
     },
     {
         "name": "read_notes",
-        "description": "Read the full content of the shared business scratchpad (the Notes page in StefHQ). Use this to check the current dev handoff doc, running notes, or anything Stef has written there.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "append_note",
-        "description": "Append a timestamped entry to the business scratchpad. Safe — prepends without overwriting existing content. Use for quick status updates, bug reports, or adding a line to the dev handoff doc.",
+        "description": "Read the content of a named note. Omit title to read the default 'Notes' scratchpad. Use specific titles for things like 'area-confirmations', 'supplier-contacts', etc.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "The text to append (will be prefixed with timestamp automatically)"},
+                "title": {"type": "string", "description": "Note title to read (default: 'Notes')"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "append_note",
+        "description": "Prepend a timestamped entry to a named note. Safe — never overwrites existing content. Use title='area-confirmations' for area decisions, or omit for the default scratchpad.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to append (timestamped automatically)"},
+                "title": {"type": "string", "description": "Note title (default: 'Notes')"},
             },
             "required": ["text"],
         },
     },
     {
         "name": "write_notes",
-        "description": "Overwrite the entire business scratchpad with new content. Use when restructuring or fully updating the dev handoff doc. Read the current content first so nothing is lost.",
+        "description": "Overwrite a named note with new content. Read first so nothing is lost. Use title param to target a specific note.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "Full new content for the scratchpad (replaces everything)"},
+                "content": {"type": "string", "description": "Full new content (replaces everything in this note)"},
+                "title": {"type": "string", "description": "Note title (default: 'Notes')"},
             },
             "required": ["content"],
         },
@@ -2046,38 +2057,36 @@ class BusinessAgent(DeskAgent):
                 results = r2.json()
         return json.dumps(results) if results else f"No products found matching '{query}'."
 
-    _NOTES_SINGLETON = "00000000-0000-0000-0000-000000000001"
-
-    async def _get_or_create_note(self, session: AsyncSession) -> Note:
-        result = await session.execute(sa.select(Note).where(Note.id == self._NOTES_SINGLETON))
+    async def _get_or_create_note(self, session: AsyncSession, title: str = "Notes") -> Note:
+        result = await session.execute(sa.select(Note).where(Note.title == title))
         note = result.scalar_one_or_none()
         if not note:
-            note = Note(id=self._NOTES_SINGLETON, content="")
+            note = Note(title=title, content="")
             session.add(note)
             await session.flush()
         return note
 
-    async def _read_notes(self, session: AsyncSession) -> str:
-        note = await self._get_or_create_note(session)
+    async def _read_notes(self, session: AsyncSession, title: str = "Notes") -> str:
+        note = await self._get_or_create_note(session, title)
         await session.commit()
-        return json.dumps({"content": note.content, "updated_at": note.updated_at.isoformat()})
+        return json.dumps({"title": note.title, "content": note.content, "updated_at": note.updated_at.isoformat()})
 
-    async def _append_note(self, session: AsyncSession, text: str) -> str:
-        note = await self._get_or_create_note(session)
+    async def _append_note(self, session: AsyncSession, text: str, title: str = "Notes") -> str:
+        note = await self._get_or_create_note(session, title)
         now = datetime.now(timezone.utc)
         timestamp = now.strftime("%-d %b %H:%M")
         entry = f"- **{timestamp}** {text.strip()}"
         note.content = entry + ("\n" + note.content if note.content else "")
         note.updated_at = now
         await session.commit()
-        return "Note appended."
+        return f"Appended to '{title}'."
 
-    async def _write_notes(self, session: AsyncSession, content: str) -> str:
-        note = await self._get_or_create_note(session)
+    async def _write_notes(self, session: AsyncSession, content: str, title: str = "Notes") -> str:
+        note = await self._get_or_create_note(session, title)
         note.content = content
         note.updated_at = datetime.now(timezone.utc)
         await session.commit()
-        return "Notes updated."
+        return f"'{title}' updated."
 
     async def _send_whatsapp_message(self, to_phone: str, message: str) -> str:
         from services.whatsapp import send_whatsapp_text
@@ -2301,11 +2310,11 @@ class BusinessAgent(DeskAgent):
                     tool_input["their_message"], tool_input["context"],
                 )
             elif name == "read_notes":
-                return await self._read_notes(session)
+                return await self._read_notes(session, tool_input.get("title", "Notes"))
             elif name == "append_note":
-                return await self._append_note(session, tool_input["text"])
+                return await self._append_note(session, tool_input["text"], tool_input.get("title", "Notes"))
             elif name == "write_notes":
-                return await self._write_notes(session, tool_input["content"])
+                return await self._write_notes(session, tool_input["content"], tool_input.get("title", "Notes"))
             return "Unknown tool"
         except Exception as e:
             return f"Tool error: {e}"

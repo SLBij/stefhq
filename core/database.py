@@ -29,3 +29,9 @@ async def init_db() -> None:
         await conn.execute(sa.text(
             "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title VARCHAR(200)"
         ))
+        await conn.execute(sa.text(
+            "ALTER TABLE notes ADD COLUMN IF NOT EXISTS title VARCHAR(200) NOT NULL DEFAULT 'Notes'"
+        ))
+        await conn.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS notes_title_unique ON notes (title)"
+        ))
