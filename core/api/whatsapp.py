@@ -167,14 +167,17 @@ async def process_stef_instruction(client_phone: str, client_name: str, instruct
         context["user_id"] = uid_result.scalar_one_or_none()
 
         full_response = ""
+        whatsapp_sent = False
         async for event in _agent.handle(prefixed, context, session):
             if event.event == "token":
                 full_response += json.loads(event.data).get("content", "")
+            elif event.event == "status" and "WhatsApp" in (event.data or ""):
+                whatsapp_sent = True
 
         session.add(Message(conversation_id=conversation.id, role="assistant", content=full_response))
         await session.commit()
 
-    return True
+    return whatsapp_sent
 
 
 async def _lookup_client_by_phone(phone: str) -> dict | None:

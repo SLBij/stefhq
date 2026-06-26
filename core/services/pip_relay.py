@@ -79,9 +79,11 @@ async def _handle_update(update: dict, redis, bot_token: str) -> None:
 
     # Route through Pip so it crafts a proper client-facing WhatsApp reply
     from api.whatsapp import process_stef_instruction
-    await process_stef_instruction(client_phone, client_name, text)
+    sent = await process_stef_instruction(client_phone, client_name, text)
 
-    await _send_telegram_message(bot_token, settings.telegram_chat_id, f"✅ Pip is replying to {client_name} on WhatsApp.")
+    display = client_name if client_name and client_name.lower() != "unknown" else client_phone
+    confirm = f"✅ Sent to {display} on WhatsApp." if sent else f"❌ Pip didn't send anything to {display} — check logs."
+    await _send_telegram_message(bot_token, settings.telegram_chat_id, confirm)
 
 
 async def _send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
